@@ -4,7 +4,7 @@ Plataforma para gestão e visualização imediata de dados vitais e contatos de 
 
 ---
 
-## 🚀 Visão Geral
+## Visão Geral
 
 O **SOSqr** conecta cuidadores, familiares e indivíduos a um sistema ágil de resposta em emergências médicas:
 - **Ficha Pública de Emergência Mobile-First**: Acesso instantâneo e sem barreiras de autenticação a dados vitais (tipo sanguíneo, alergias severas, medicamentos de alto risco, condições crônicas e contatos de socorro para discagem direta com 1 toque).
@@ -14,7 +14,7 @@ O **SOSqr** conecta cuidadores, familiares e indivíduos a um sistema ágil de r
 
 ---
 
-## 🛠️ Stack Tecnológica
+## Stack Tecnológica
 
 - **Front-end**: React 18+ (compatível com 19), TypeScript, Vite, Tailwind CSS, `@clerk/clerk-react`, `qrcode.react`, `@react-pdf/renderer` e `lucide-react`.
 - **Back-end**: Ruby on Rails 8 (Modo API), Ruby 3.3, PostgreSQL 16+ com extensão `pgcrypto` (UUID v4 nativo), Puma.
@@ -23,7 +23,7 @@ O **SOSqr** conecta cuidadores, familiares e indivíduos a um sistema ágil de r
 
 ---
 
-## 📖 Documentação Técnica Completa
+## Documentação Técnica Completa
 
 Para especificações arquiteturais detalhadas, contratos de endpoints, modelagem de dados e guia do Design System ("Cuidado Suave"):
 - [**`BACKEND_SPEC.md`**](./backend/sosqr-api/BACKEND_SPEC.md): Especificação técnica da API Rails 8, controllers, schema PostgreSQL, telemetria e módulo administrativo planejado.
