@@ -13,9 +13,12 @@ WORKDIR /app
 COPY Gemfile Gemfile.lock ./
 RUN bundle install
 
-# Script de entrypoint para limpar PID do Puma/Rails
+# Copia todo o código-fonte da aplicação
+COPY . .
+
+# Script de entrypoint para limpar PID do Puma/Rails e executar db:prepare
 COPY entrypoint.sh /usr/bin/
-RUN chmod +x /usr/bin/entrypoint.sh
+RUN chmod +x /usr/bin/entrypoint.sh && sed -i 's/\r$//' /usr/bin/entrypoint.sh
 ENTRYPOINT ["entrypoint.sh"]
 
 EXPOSE 3000

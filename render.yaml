@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: sosqr-api
+    runtime: docker
+    rootDir: backend/sosqr-api
+    plan: free
+    region: oregon
+    healthCheckPath: /up
+    envVars:
+      - key: RAILS_ENV
+        value: production
+      - key: RAILS_LOG_LEVEL
+        value: info
+      - key: RAILS_MAX_THREADS
+        value: 5
+      - key: SECRET_KEY_BASE
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: ADMIN_USER_IDS
+        sync: false
