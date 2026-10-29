@@ -87,7 +87,15 @@ test:
 # for a full overview on how database connection configuration can be specified.
 #
 production:
-  <<: *default
-  sslmode: <%= ENV.fetch("DB_SSLMODE", "require") %>
+  primary: &primary_production
+    <<: *default
+    sslmode: <%= ENV.fetch("DB_SSLMODE", "require") %>
+  cache:
+    <<: *primary_production
+  queue:
+    <<: *primary_production
+  cable:
+    <<: *primary_production
+
 
 
