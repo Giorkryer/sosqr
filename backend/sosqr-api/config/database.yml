@@ -17,6 +17,9 @@ default: &default
   encoding: unicode
   url: <%= ENV['DATABASE_URL'] %>
   pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+  connect_timeout: 10
+  checkout_timeout: 10
+
 
 
 development:
