@@ -1,23 +1,26 @@
 services:
-  db:
-    image: postgres:16-alpine
-    container_name: sosqr-db
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: sosqr_api_development
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - sosqr-network
+  # O serviço de banco de dados local (db) foi desativado porque o SOSqr
+  # agora utiliza o PostgreSQL gerenciado em nuvem do Supabase via DATABASE_URL.
+  # Caso queira voltar a usar o Postgres localmente em container, basta descomentar este bloco:
+  # db:
+  #   image: postgres:16-alpine
+  #   container_name: sosqr-db
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_DB: sosqr_api_development
+  #     POSTGRES_USER: postgres
+  #     POSTGRES_PASSWORD: password
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U postgres"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 5
+  #   networks:
+  #     - sosqr-network
 
   api:
     build:
@@ -33,12 +36,6 @@ services:
       - "3000:3000"
     environment:
       RAILS_ENV: development
-      DATABASE_HOST: db
-      DATABASE_USERNAME: postgres
-      DATABASE_PASSWORD: password
-    depends_on:
-      db:
-        condition: service_healthy
     networks:
       - sosqr-network
     env_file:

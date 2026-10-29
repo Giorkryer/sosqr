@@ -24,3 +24,8 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Local documentation & Studies
+docs/
+estudo_viabilidade_deploy_online.md
+

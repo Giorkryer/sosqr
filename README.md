@@ -16,9 +16,9 @@ O **SOSqr** conecta cuidadores, familiares e indivíduos a um sistema ágil de r
 
 ## Stack Tecnológica
 
-- **Front-end**: React 18+ (compatível com 19), TypeScript, Vite, Tailwind CSS, `@clerk/clerk-react`, `qrcode.react`, `@react-pdf/renderer` e `lucide-react`.
-- **Back-end**: Ruby on Rails 8 (Modo API), Ruby 3.3, PostgreSQL 16+ com extensão `pgcrypto` (UUID v4 nativo), Puma.
-- **Autenticação**: Clerk Auth com validação assimétrica de tokens JWT (RS256).
+- **Front-end**: React 18+ (compatível com 19), TypeScript, Vite, Tailwind CSS, `@supabase/supabase-js`, `qrcode.react`, `@react-pdf/renderer` e `lucide-react`.
+- **Back-end**: Ruby on Rails 8 (Modo API), Ruby 3.3, PostgreSQL 16+ com extensão `pgcrypto` (UUID v4 nativo), Row Level Security (RLS) e Puma.
+- **Autenticação**: Supabase Auth com validação de tokens JWT (HS256) e suporte a Social Login (Google).
 - **Testes Automatizados**: Vitest + React Testing Library (Front-end) e RSpec + FactoryBot (Back-end).
 
 ---
@@ -28,6 +28,7 @@ O **SOSqr** conecta cuidadores, familiares e indivíduos a um sistema ágil de r
 Para especificações arquiteturais detalhadas, contratos de endpoints, modelagem de dados e guia do Design System ("Cuidado Suave"):
 - [**`BACKEND_SPEC.md`**](./backend/sosqr-api/BACKEND_SPEC.md): Especificação técnica da API Rails 8, controllers, schema PostgreSQL, telemetria e módulo administrativo planejado.
 - [**`FRONTEND_SPEC.md`**](./frontend/sosqr-web/FRONTEND_SPEC.md): Especificação técnica da aplicação React/Vite, mapa de rotas, paleta de cores, acessibilidade WCAG AAA e emissão de cartões CR80.
+
 
 ---
 
