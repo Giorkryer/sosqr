@@ -39,7 +39,16 @@ api.interceptors.request.use(
       }
 
       if (!token) {
-        const { data } = await supabase.auth.getSession();
+        let { data } = await supabase.auth.getSession();
+
+        // Se a sessão expirou ou vai expirar no próximo minuto, renova automaticamente
+        if (data.session?.expires_at && data.session.expires_at * 1000 < Date.now() + 60000) {
+          const refreshRes = await supabase.auth.refreshSession();
+          if (refreshRes.data.session) {
+            data = refreshRes.data;
+          }
+        }
+
         token = data.session?.access_token ?? null;
       }
 

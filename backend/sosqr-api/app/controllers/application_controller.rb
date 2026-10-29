@@ -23,11 +23,20 @@ class ApplicationController < ActionController::API
     # 2. Decodificação do Token
     decoded = begin
       if ENV['SUPABASE_JWT_SECRET'].present?
-        # Tenta validação oficial com a chave secreta HS256
-        JWT.decode(token, ENV['SUPABASE_JWT_SECRET'], true, { algorithm: 'HS256' })
+        secret = ENV['SUPABASE_JWT_SECRET'].to_s.strip.delete_prefix('"').delete_suffix('"')
+        begin
+          JWT.decode(token, secret, true, { algorithm: 'HS256', leeway: 120 })
+        rescue JWT::VerificationError => e
+          # Tenta decodificar a chave em Base64 se a verificação crua falhar
+          begin
+            JWT.decode(token, Base64.decode64(secret), true, { algorithm: 'HS256', leeway: 120 })
+          rescue StandardError
+            raise e
+          end
+        end
       elsif ENV['CLERK_PEM_PUBLIC_KEY'].present?
         rsa_public = OpenSSL::PKey::RSA.new(ENV['CLERK_PEM_PUBLIC_KEY'].gsub('\n', "\n"))
-        JWT.decode(token, rsa_public, true, { algorithm: 'RS256' })
+        JWT.decode(token, rsa_public, true, { algorithm: 'RS256', leeway: 120 })
       elsif Rails.env.development?
         JWT.decode(token, nil, false)
       else
@@ -35,6 +44,7 @@ class ApplicationController < ActionController::API
         return
       end
     rescue JWT::DecodeError, JWT::ExpiredSignature => e
+      Rails.logger.warn "[AUTH ERROR] Falha na validação do token JWT: #{e.class} - #{e.message}"
       if Rails.env.development?
         # Em desenvolvimento, se o token expirou ou a assinatura divergiu (ex: cookies antigos do navegador),
         # decodifica os dados sem travar o desenvolvedor com status 401
