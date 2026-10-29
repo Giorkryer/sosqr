@@ -4,10 +4,13 @@ class Patient < ApplicationRecord
 
   accepts_nested_attributes_for :emergency_contacts, allow_destroy: true
 
-  before_validation :ensure_display_name
+  before_validation :ensure_display_name, :sanitize_sus_number, :sync_user_identifiers
   before_create :set_public_token
 
   validates :display_name, :blood_type, presence: true
+  validates :sus_number, length: { is: 15 }, allow_blank: true 
+  validates :sus_number, format: { with: /\A\d+\z/, message: "deve conter apenas números" }, allow_blank: true
+
 
   def age
     return nil if birth_date.blank?
@@ -48,5 +51,16 @@ class Patient < ApplicationRecord
 
   def set_public_token
     self.public_token ||= SecureRandom.uuid
+  end
+
+  def sanitize_sus_number
+    self.sus_number = sus_number.to_s.gsub(/\D/, "").strip if sus_number.present?
+  end
+
+  def sync_user_identifiers
+    if respond_to?(:user_id) && respond_to?(:clerk_user_id)
+      self.user_id = clerk_user_id if user_id.blank? && clerk_user_id.present?
+      self.clerk_user_id = user_id if clerk_user_id.blank? && user_id.present?
+    end
   end
 end

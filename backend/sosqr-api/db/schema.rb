@@ -10,12 +10,17 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_19_063300) do
-  # These are extensions that must be enabled in order to support this database
-  enable_extension "pg_catalog.plpgsql"
-  enable_extension "pgcrypto"
+ActiveRecord::Schema[8.1].define(version: 2026_10_23_131500) do
+  create_schema "extensions"
 
-  create_table "emergency_contacts", force: :cascade do |t|
+  # These are extensions that must be enabled in order to support this database
+  enable_extension "extensions.pg_stat_statements"
+  enable_extension "extensions.pgcrypto"
+  enable_extension "extensions.uuid-ossp"
+  enable_extension "pg_catalog.plpgsql"
+  enable_extension "vault.supabase_vault"
+
+  create_table "public.emergency_contacts", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.boolean "is_primary"
     t.string "name"
@@ -26,7 +31,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_19_063300) do
     t.index ["patient_id"], name: "index_emergency_contacts_on_patient_id"
   end
 
-  create_table "patients", force: :cascade do |t|
+  create_table "public.patients", force: :cascade do |t|
     t.jsonb "allergies"
     t.date "birth_date"
     t.string "blood_type"
@@ -48,11 +53,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_19_063300) do
     t.string "rg"
     t.string "sus_number"
     t.datetime "updated_at", null: false
+    t.string "user_id"
     t.index ["clerk_user_id"], name: "index_patients_on_clerk_user_id"
     t.index ["public_token"], name: "index_patients_on_public_token", unique: true
+    t.index ["user_id"], name: "index_patients_on_user_id"
   end
 
-  create_table "scan_logs", force: :cascade do |t|
+  create_table "public.scan_logs", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "ip_address"
     t.bigint "patient_id", null: false
@@ -62,6 +69,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_19_063300) do
     t.index ["patient_id"], name: "index_scan_logs_on_patient_id"
   end
 
-  add_foreign_key "emergency_contacts", "patients"
-  add_foreign_key "scan_logs", "patients"
+  add_foreign_key "public.emergency_contacts", "public.patients"
+  add_foreign_key "public.scan_logs", "public.patients"
+
 end

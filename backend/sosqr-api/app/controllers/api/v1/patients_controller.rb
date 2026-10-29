@@ -4,8 +4,15 @@ module Api
       before_action :set_patient, only: [:show, :update, :destroy]
 
       def index
-        @patients = Patient.where(clerk_user_id: @current_user_id)
-                           .includes(:emergency_contacts, :scan_logs)
+        scope = if Rails.env.development? && @current_user_id == 'dev_cuidador_local'
+                  Patient.all
+                elsif Patient.column_names.include?('user_id')
+                  Patient.where("user_id = :uid OR clerk_user_id = :uid", uid: @current_user_id)
+                else
+                  Patient.where(clerk_user_id: @current_user_id)
+                end
+
+        @patients = scope.includes(:emergency_contacts, :scan_logs)
         render json: @patients.as_json(include: :emergency_contacts, methods: [:last_scan, :age]), status: :ok
       end
 
@@ -15,7 +22,8 @@ module Api
 
       def create
         @patient = Patient.new(patient_params)
-        @patient.clerk_user_id = @current_user_id
+        @patient.user_id = @current_user_id if @patient.respond_to?(:user_id=)
+        @patient.clerk_user_id = @current_user_id if @patient.respond_to?(:clerk_user_id=)
 
         if @patient.save
           render json: @patient, status: :created
@@ -40,7 +48,13 @@ module Api
       private
 
       def set_patient
-        @patient = Patient.find_by!(id: params[:id], clerk_user_id: @current_user_id)
+        @patient = if Patient.column_names.include?('user_id')
+                     Patient.where(id: params[:id])
+                            .where("user_id = :uid OR clerk_user_id = :uid", uid: @current_user_id)
+                            .first!
+                   else
+                     Patient.find_by!(id: params[:id], clerk_user_id: @current_user_id)
+                   end
       rescue ActiveRecord::RecordNotFound
         render json: { error: 'Paciente não encontrado ou acesso não autorizado' }, status: :not_found
       end

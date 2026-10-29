@@ -24,33 +24,33 @@ flowchart TD
         ADM[Painel Administrativo / Web React]
     end
 
-    subgraph Provedor de Identidade
-        C[Clerk Auth Provider\n(RS256 JWT)]
+    subgraph Provedor de Identidade e Dados
+        C[Supabase Auth\n(JWT HS256 / Session)]
+        DB[(Supabase PostgreSQL 16+\nRow Level Security RLS\nSession Pooler 5432 & pgcrypto)]
     end
 
     subgraph Backend - sosqr-api Rails 8
-        D[ApplicationController\nFiltro JWT RS256 & Extração de sub]
-        D_ADMIN[Admin::BaseController\nValidação de Claim role: admin]
+        D[ApplicationController\nFiltro JWT HS256 & Extração de sub / user_id]
+        D_ADMIN[Admin::BaseController\nValidação de Claim role: admin ou ADMIN_USER_IDS]
         E[Api::V1::PatientsController\nCRUD Autenticado do Cuidador]
         F[Api::V1::EmergencyProfilesController\nFicha Pública via public_token]
         G_ADMIN[Api::V1::Admin::DashboardController\nKPIs Agregados & Auditoria]
         H[ScanLog Recorder\nAuditoria Silenciosa de Leituras]
-        I[(PostgreSQL 16+\nextensão pgcrypto)]
     end
 
-    A -- "1. Login / Obter JWT" --> C
+    A -- "1. Login / Obter JWT HS256" --> C
     A -- "2. Header: Authorization Bearer JWT" --> D
-    D -- "3. Valida PEM & extrai sub" --> E
-    E -- "4. CRUD isolado por clerk_user_id" --> I
+    D -- "3. Valida HS256 secret & extrai sub" --> E
+    E -- "4. CRUD isolado por user_id" --> DB
 
     B -- "Leitura QR Code: GET /api/v1/emergency/:public_token" --> F
     F -- "Grava telemetria silenciosa" --> H
-    H --> I
+    H --> DB
     F -- "Retorna dados vitais de socorro (LGPD Safe)" --> B
 
-    ADM -- "1. Header: Bearer JWT com claim admin" --> D_ADMIN
-    D_ADMIN -- "2. Verifica claim/role" --> G_ADMIN
-    G_ADMIN -- "3. Consulta agregações e histórico" --> I
+    ADM -- "1. Header: Bearer JWT com role admin" --> D_ADMIN
+    D_ADMIN -- "2. Verifica claim/role ou ADMIN_USER_IDS" --> G_ADMIN
+    G_ADMIN -- "3. Consulta agregações e histórico" --> DB
 ```
 
 ### 1.3 Stack Tecnológica
@@ -59,83 +59,135 @@ flowchart TD
 | :--- | :--- | :--- | :--- |
 | **Linguagem** | Ruby | `3.3.5` (`.ruby-version`) | Alta performance com YJIT e estabilidade moderna. |
 | **Framework** | Ruby on Rails | `8.1.3` (Modo API) | `config.api_only = true`: elimina overhead de views/cookies/assets para latência mínima. |
-| **Banco de Dados** | PostgreSQL | `16+` com `pgcrypto` | Suporte nativo a colunas `uuid` e tipos estruturados `jsonb`. |
+| **Banco de Dados** | PostgreSQL no Supabase | `16+` com `pgcrypto` & `RLS` | Banco gerenciado com Row Level Security (RLS) ativo em todas as tabelas e pooler de sessões. |
 | **Servidor de Aplicação**| Puma | `>= 5.0` | Servidor concorrente multithread de padrão industrial. |
-| **Autenticação** | Clerk Auth | JWT assimétrico (RS256) | Delegação segura de autenticação sem armazenamento de senhas locais. |
+| **Autenticação** | Supabase Auth | JWT simétrico (HS256) | Autenticação gerenciada compatível com padrão BaaS, sem armazenamento de senhas locais na API. |
 | **Suíte de Testes** | RSpec & FactoryBot | `rspec-rails ~> 7.x`, `factory_bot_rails` | Testes automatizados BDD e mocks de integração declarativos. |
 
 ### 1.4 Dependências Críticas (`Gemfile`)
 
-- **`jwt`**: Decodificação e validação criptográfica de tokens assimétricos RS256 emitidos pelo Clerk.
+- **`jwt`**: Decodificação e validação criptográfica de tokens HS256 emitidos pelo Supabase Auth (com fallback retrocompatível para RS256).
 - **`dotenv-rails (~> 3.2)`**: Gerenciamento e injeção de variáveis de ambiente locais (`.env`) em desenvolvimento e testes.
 - **`rack-cors`**: Configuração de Cross-Origin Resource Sharing liberando requisições assíncronas do frontend web/mobile.
 - **`json (~> 2.8)`**: Compatibilidade de parsing JSON no ecossistema Rails 8 e Ruby 3.3.
-- **`pg (~> 1.1)`**: Driver nativo do PostgreSQL para Active Record.
+- **`pg (~> 1.1)`**: Driver nativo do PostgreSQL para Active Record conectando ao Supabase via `DATABASE_URL`.
 
 ---
 
 ## 2. Autenticação, Segurança e Conformidade LGPD
 
-### 2.1 Integração com Clerk Auth (RS256)
-A autenticação de usuários e administradores é 100% stateless e baseada em tokens JWT assinados pelo provedor externo **Clerk**. Não há persistência de senhas ou hashes Bcrypt no banco de dados da API.
+### 2.1 Integração com Supabase Auth (HS256)
+A autenticação de usuários e administradores é 100% stateless e baseada em tokens JWT assinados pelo **Supabase Auth** utilizando o algoritmo simétrico **HS256**. Não há persistência de senhas ou hashes Bcrypt no banco de dados da API Rails.
 
 #### Fluxo de Validação no `ApplicationController`:
-1. O cliente envia o token no cabeçalho HTTP:
+1. O cliente (React/Vite) envia o token no cabeçalho HTTP:
    ```http
-   Authorization: Bearer <clerk_session_jwt>
+   Authorization: Bearer <supabase_access_token>
    ```
-2. O filtro `authenticate_clerk_user!` intercepta todas as rotas privadas:
-   - Extrai o token do cabeçalho. Caso ausente, responde imediatamente com `401 Unauthorized`.
-   - Converte a chave pública PEM armazenada em `ENV['CLERK_PEM_PUBLIC_KEY']` em um objeto RSA (`OpenSSL::PKey::RSA.new`), tratando quebras de linha normalizadas (`\n`).
-   - Executa `JWT.decode(token, rsa_public, true, { algorithm: 'RS256' })`.
-   - Extrai a claim `sub` (Subject), que identifica univocamente o usuário no Clerk, atribuindo-a a `@current_user_id`.
-   - Extrai eventuais claims de permissão (ex.: `role` ou `public_metadata.role`), atribuindo a `@current_user_role`.
-   - Trata exceções `JWT::DecodeError`, `JWT::ExpiredSignature` (retornando `401 Unauthorized`) e `OpenSSL::PKey::RSAError` (retornando `500 Internal Server Error`).
+2. O filtro `before_action :authenticate_user!` intercepta todas as rotas privadas (com alias `authenticate_clerk_user!` para compatibilidade regressiva):
+   - Extrai o token do cabeçalho. Caso ausente:
+     - Em ambiente `development`: injeta usuário de fallback `@current_user_id = 'dev_cuidador_local'` com role `admin` para permitir testes rápidos sem bloquear o fluxo.
+     - Em produção: responde imediatamente com `401 Unauthorized`.
+   - Valida o token contra `ENV['SUPABASE_JWT_SECRET']` usando algoritmo `HS256`.
+   - Possui camada de fallback retrocompatível para `ENV['CLERK_PEM_PUBLIC_KEY']` (RS256) caso ainda existam tokens de transição.
+   - Extrai a claim `sub` (UUID do usuário no Supabase Auth), atribuindo-a a `@current_user_id`.
+   - Extrai a role administrativa a partir de `payload.dig('app_metadata', 'role')`, `payload.dig('user_metadata', 'role')` ou da variável `ADMIN_USER_IDS`, atribuindo a `@current_user_role`.
+   - Trata exceções `JWT::DecodeError` e `JWT::ExpiredSignature`, respondendo com status `401 Unauthorized`.
 
 ```ruby
 # app/controllers/application_controller.rb
 class ApplicationController < ActionController::API
-  before_action :authenticate_clerk_user!
+  before_action :authenticate_user!
 
-  attr_reader :current_user_id, :current_user_role
+  attr_reader :current_user_id, :claims, :jwt_claims, :current_user_role
 
   private
 
-  def authenticate_clerk_user!
+  def authenticate_user!
     header = request.headers['Authorization']
     token = header.split(' ').last if header.present?
 
-    return render json: { error: 'Token não fornecido' }, status: :unauthorized unless token
+    # 1. Se não houver token no cabeçalho
+    unless token
+      if Rails.env.development?
+        @current_user_id = 'dev_cuidador_local'
+        @current_user_role = 'admin'
+        return
+      else
+        return render json: { error: 'Token de autenticação não fornecido' }, status: :unauthorized
+      end
+    end
 
-    rsa_public = OpenSSL::PKey::RSA.new(ENV['CLERK_PEM_PUBLIC_KEY'].gsub('\n', "\n"))
-    decoded = JWT.decode(token, rsa_public, true, { algorithm: 'RS256' })
+    # 2. Decodificação do Token
+    decoded = begin
+      if ENV['SUPABASE_JWT_SECRET'].present?
+        JWT.decode(token, ENV['SUPABASE_JWT_SECRET'], true, { algorithm: 'HS256' })
+      elsif ENV['CLERK_PEM_PUBLIC_KEY'].present?
+        rsa_public = OpenSSL::PKey::RSA.new(ENV['CLERK_PEM_PUBLIC_KEY'].gsub('\n', "\n"))
+        JWT.decode(token, rsa_public, true, { algorithm: 'RS256' })
+      elsif Rails.env.development?
+        JWT.decode(token, nil, false)
+      else
+        render json: { error: 'Chave de autenticação (SUPABASE_JWT_SECRET) não configurada no servidor' }, status: :internal_server_error
+        return
+      end
+    rescue JWT::DecodeError, JWT::ExpiredSignature => e
+      if Rails.env.development?
+        Rails.logger.warn "[AUTH DEV] #{e.class}: #{e.message}. Fallback liberado em desenvolvimento."
+        begin
+          JWT.decode(token, nil, false)
+        rescue StandardError
+          [{ 'sub' => 'dev_cuidador_local' }, {}]
+        end
+      else
+        raise e
+      end
+    end
 
-    payload = decoded[0]
-    @current_user_id = payload['sub']
-    @current_user_role = payload['role'] || payload.dig('public_metadata', 'role')
-  rescue JWT::DecodeError, JWT::ExpiredSignature
-    render json: { error: 'Token inválido ou expirado' }, status: :unauthorized
-  rescue OpenSSL::PKey::RSAError
-    render json: { error: 'Erro na configuração da chave pública' }, status: :internal_server_error
+    @claims = decoded[0] || {}
+    @jwt_claims = @claims
+    @current_user_id = @claims['sub'].presence || 'dev_cuidador_local'
+    @current_user_role = @claims.dig('app_metadata', 'role') ||
+                         @claims.dig('user_metadata', 'role') ||
+                         @claims['role'] ||
+                         (Rails.env.development? ? 'admin' : nil)
+  rescue JWT::DecodeError, JWT::ExpiredSignature => e
+    render json: { error: 'Token inválido ou expirado', details: e.message }, status: :unauthorized
+  rescue StandardError => e
+    render json: { error: 'Erro ao validar autenticação', details: e.message }, status: :internal_server_error
   end
+
+  alias_method :authenticate_clerk_user!, :authenticate_user!
 end
 ```
 
-### 2.2 Proteção Anti-IDOR (Insecure Direct Object Reference)
-O sistema implementa isolamento estrito de dados para mitigar qualquer risco de IDOR:
+### 2.2 Proteção Anti-IDOR e Row Level Security (RLS) no PostgreSQL
+O sistema implementa defesa em profundidade (Defense-in-Depth) contra Insecure Direct Object Reference (IDOR):
 
 1. **Acesso Público de Emergência via UUID v4:**
    - O QR Code **nunca** expõe chaves sequenciais primárias (`/patients/1`, `/patients/2`).
-   - O acesso é realizado estritamente pelo campo `public_token` (UUID v4 aleatório de 128 bits gerado via `SecureRandom.uuid`).
+   - O acesso público é realizado estritamente pelo campo `public_token` (UUID v4 de 128 bits gerado via `SecureRandom.uuid`).
    - O espaço de endereçamento de $2^{122}$ combinações inviabiliza ataques de enumeração ou varredura em massa.
    - O campo conta com restrição de unicidade no banco de dados (`index_patients_on_public_token UNIQUE`).
 
-2. **Isolamento de Escopo por Usuário/Cuidador nas Rotas Privadas:**
-   - Nas operações autenticadas (`/api/v1/patients`), toda consulta é vinculada obrigatoriamente ao `@current_user_id` do token validado:
+2. **Isolamento de Escopo por Cuidador na API Rails (Active Record):**
+   - Nas operações privadas (`/api/v1/patients`), toda consulta é vinculada estritamente ao `@current_user_id` validado pelo token:
      ```ruby
-     @patient = Patient.find_by!(id: params[:id], clerk_user_id: @current_user_id)
+     @patient = Patient.where(id: params[:id])
+                       .where("user_id = :uid OR clerk_user_id = :uid", uid: @current_user_id)
+                       .first!
      ```
-   - Caso um usuário tente acessar, editar ou excluir um `id` pertencente a outro usuário, a busca dispara `ActiveRecord::RecordNotFound`, respondendo `404 Not Found` sem revelar a existência do registro.
+   - Caso um usuário tente acessar ou alterar um `id` pertencente a outro cuidador, a busca dispara `ActiveRecord::RecordNotFound`, respondendo `404 Not Found` sem revelar a existência do registro.
+
+3. **Camada de Defesa em Banco via Row Level Security (RLS):**
+   - Habilitado nativamente no Supabase PostgreSQL via migration `EnableRlsOnAllTables`.
+   - Garante que mesmo em eventuais consultas diretas via PostgREST/Supabase client, um usuário só consegue visualizar e modificar dados pertencentes ao seu `auth.uid()`:
+     ```sql
+     CREATE POLICY "Cuidadores gerenciam seus proprios pacientes"
+     ON public.patients FOR ALL TO authenticated
+     USING (auth.uid()::text = user_id OR auth.uid()::text = clerk_user_id)
+     WITH CHECK (auth.uid()::text = user_id OR auth.uid()::text = clerk_user_id);
+     ```
 
 ### 2.3 Diretriz de Privacidade e Conformidade LGPD
 O sistema trata **Dados Pessoais Sensíveis** (Art. 5º, II da LGPD: saúde, biomédicos e diretivas) e **Dados Pessoais Civis** (Art. 5º, I: nome, CPF, RG).
@@ -163,7 +215,8 @@ Para cumprir os princípios de **Finalidade, Adequação e Necessidade** (Art. 6
 | `rg` | Documento Estadual | **NÃO** | **Sim** | **Protegido:** Identificação civil mantida em sigilo estrito fora da emergência. |
 | `sus_number` | Cartão Nacional SUS | **NÃO** | **Sim** | **Protegido:** Dado administrativo do prontuário do titular/cuidador. |
 | `private_notes` | Anotações Privadas | **NÃO** | **Sim** | **Protegido:** Informações de rotina confidencial, nunca expostas no QR Code. |
-| `clerk_user_id` | Identificador Auth | **NÃO** | **NÃO (interno)** | Chave interna de partição de dados do sistema. |
+| `user_id` | Identificador Supabase | **NÃO** | **NÃO (interno)** | UUID do cuidador no Supabase Auth (`sub`), chave de isolamento de dados. |
+| `clerk_user_id` | Identificador Legado | **NÃO** | **NÃO (interno)** | Chave de compatibilidade retroativa para contas migradas. |
 
 ---
 
@@ -178,6 +231,7 @@ erDiagram
 
     patients {
         bigserial id PK
+        uuid user_id "INDEX"
         string clerk_user_id "INDEX"
         uuid public_token "UNIQUE INDEX"
         string display_name "NOT NULL"
@@ -231,13 +285,14 @@ Armazena o prontuário completo do indivíduo, dados vitais, dados civis restrit
 | Coluna | Tipo SQL | Modificadores / Índices | Descrição |
 | :--- | :--- | :--- | :--- |
 | `id` | `bigint` | Primary Key, Auto Increment | Identificador interno sequencial do paciente. |
-| `clerk_user_id` | `varchar` | `index: true` | Identificador do usuário/cuidador no Clerk (claim `sub`). |
+| `user_id` | `varchar` / `uuid` | `index: true` | Identificador do usuário/cuidador no Supabase Auth (claim `sub`). |
+| `clerk_user_id` | `varchar` | `index: true` | Identificador de transição/legado de contas migradas. |
 | `public_token` | `uuid` | `unique: true`, `index: true` | Token público UUID v4 impresso no QR Code de emergência. |
 | `display_name` | `varchar` | `null: false` | Nome de exibição/social (fallback automático via callback). |
 | `full_name` | `varchar` | Opcional | Nome civil completo do titular. |
 | `cpf` | `varchar` | Opcional | CPF do titular (restrito ao usuário/cuidador autenticado). |
 | `rg` | `varchar` | Opcional | Registro Geral civil e órgão emissor. |
-| `sus_number` | `varchar` | Opcional | Cartão Nacional de Saúde (CNS/SUS). |
+| `sus_number` | `varchar` | Opcional | Cartão Nacional de Saúde (CNS/SUS, sanitizado para 15 dígitos numéricos). |
 | `birth_date` | `date` | Opcional | Data de nascimento (utilizada no cálculo do método `age`). |
 | `gender` | `varchar` | Opcional | Gênero/sexo (`Feminino`, `Masculino`, etc.). |
 | `blood_type` | `varchar` | `null: false` | Tipo sanguíneo e fator Rh (`A+`, `O-`, etc.). |
@@ -282,7 +337,29 @@ Trilha de auditoria e telemetria gravada a cada leitura da ficha de emergência.
 
 ---
 
-### 3.3 Regras de Negócio e Implementação nos Modelos
+### 3.3 Políticas de Segurança de Nível de Linha (Row Level Security - RLS)
+
+Todas as tabelas do schema público possuem RLS habilitado (conforme migration `20261023131500_enable_rls_on_all_tables.rb`), blindando a base de dados no Supabase:
+
+1. **Tabela `patients`**:
+   - `ENABLE ROW LEVEL SECURITY`: Ativo.
+   - **Política**: `"Cuidadores gerenciam seus proprios pacientes"` (FOR ALL TO authenticated).
+   - **Condição**: `(auth.uid()::text = user_id OR auth.uid()::text = clerk_user_id)`.
+2. **Tabela `emergency_contacts`**:
+   - `ENABLE ROW LEVEL SECURITY`: Ativo.
+   - **Política**: `"Cuidadores gerenciam contatos de seus pacientes"` (FOR ALL TO authenticated).
+   - **Condição**: Subconsulta verificando propriedade do `patient_id` correspondente ao `auth.uid()`.
+3. **Tabela `scan_logs`**:
+   - `ENABLE ROW LEVEL SECURITY`: Ativo.
+   - **Política**: `"Cuidadores leem scan_logs de seus pacientes"` (FOR SELECT TO authenticated).
+   - **Condição**: Subconsulta verificando propriedade do `patient_id` correspondente ao `auth.uid()`.
+4. **Tabelas Internas do Rails (`schema_migrations`, `ar_internal_metadata`)**:
+   - `ENABLE ROW LEVEL SECURITY`: Ativo. Garante aprovação integral pelo Supabase Security Advisor.
+   - Como o backend Rails conecta com credencial superuser `postgres`, possui privilégio de superusuário (`BYPASSRLS`), mantendo migrações e rotas da API executadas normalmente.
+
+---
+
+### 3.4 Regras de Negócio e Implementação nos Modelos
 
 #### `Patient` (`app/models/patient.rb`)
 - **Associações em Cascata**:
@@ -292,6 +369,8 @@ Trilha de auditoria e telemetria gravada a cada leitura da ficha de emergência.
   - `accepts_nested_attributes_for :emergency_contacts, allow_destroy: true` — permite criação, edição e exclusão de contatos em uma única transação atômica.
 - **Callbacks do Ciclo de Vida**:
   - `before_validation :ensure_display_name`: caso `display_name` seja omitido, extrai automaticamente o primeiro nome a partir de `full_name` (`full_name.to_s.strip.split(/\s+/).first`).
+  - `before_validation :sanitize_sus_number`: remove qualquer caractere não numérico do campo `sus_number`.
+  - `before_validation :sync_user_identifiers`: sincroniza bidirecionalmente `user_id` e `clerk_user_id` durante o período de migração caso um dos campos esteja preenchido.
   - `before_create :set_public_token`: inicializa o `public_token` usando `SecureRandom.uuid` se o atributo estiver vazio.
 - **Métodos Auxiliares**:
   - `age`: Calcula dinamicamente a idade em anos inteiros com base em `birth_date` e `Date.current`, ajustando para o mês e dia de aniversário:
@@ -325,6 +404,7 @@ Trilha de auditoria e telemetria gravada a cada leitura da ficha de emergência.
     ```
 - **Validações**:
   - `validates :display_name, :blood_type, presence: true` assegura integridade mínima para situações de socorro.
+  - `validates :sus_number, length: { is: 15 }, format: { with: /\A\d+\z/ }, allow_blank: true` valida conformidade com padrão CNS.
 
 #### `EmergencyContact` (`app/models/emergency_contact.rb`)
 - **Associações**:
@@ -356,7 +436,7 @@ Trilha de auditoria e telemetria gravada a cada leitura da ficha de emergência.
 
 #### 4.2.1 `GET /api/v1/emergency/:public_token`
 - **Descrição**: Rota pública acionada pelo socorrista ao ler o QR Code físico. Retorna estritamente dados médicos vitais de socorro e contatos para discagem rápida. Dispara a gravação silenciosa de auditoria em `scan_logs`.
-- **Autenticação**: Nenhuma (`skip_before_action :authenticate_clerk_user!`).
+- **Autenticação**: Nenhuma (`skip_before_action :authenticate_user!`).
 - **Parâmetros de Rota**:
   - `public_token` (UUID v4 obrigatório): Token contido na URL do QR Code.
 - **Efeito Colateral**: Insere um registro em `scan_logs` com `ip_address: request.remote_ip`, `user_agent: request.user_agent`, `scanned_at: Time.current`.
@@ -416,7 +496,7 @@ Trilha de auditoria e telemetria gravada a cada leitura da ficha de emergência.
 ---
 
 #### 4.2.2 `GET /api/v1/patients`
-- **Descrição**: Retorna a lista de perfis vinculados exclusivamente ao usuário autenticado (`clerk_user_id == current_user_id`). Inclui o cálculo de idade (`age`), contatos de emergência e o resumo do último escaneamento (`last_scan`).
+- **Descrição**: Retorna a lista de perfis vinculados exclusivamente ao usuário autenticado (`user_id == current_user_id || clerk_user_id == current_user_id`). Inclui o cálculo de idade (`age`), contatos de emergência e o resumo do último escaneamento (`last_scan`).
 - **Autenticação**: Obrigatória (`Authorization: Bearer <token>`).
 - **Respostas**:
 
@@ -425,7 +505,8 @@ Trilha de auditoria e telemetria gravada a cada leitura da ficha de emergência.
 [
   {
     "id": 1,
-    "clerk_user_id": "user_2testClerkId123",
+    "user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "clerk_user_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "public_token": "cb11872a-8338-4119-8ca6-f14f7b77aace",
     "display_name": "Francisca",
     "full_name": "Maria Francisca dos Santos",
@@ -566,10 +647,10 @@ Trilha de auditoria e telemetria gravada a cada leitura da ficha de emergência.
 
 ---
 
-#### 4.2.7 `GET /api/v1/admin/dashboard` (Módulo Administrativo Planejado)
+#### 4.2.7 `GET /api/v1/admin/dashboard`
 - **Descrição**: Endpoint exclusivo para administradores da plataforma. Retorna KPIs agregados de monitoramento do sistema e a listagem dos últimos 50 escaneamentos de emergência auditados.
-- **Autenticação**: Obrigatória via Bearer JWT.
-- **Autorização**: Validação da claim `role == 'admin'` ou `public_metadata.role == 'admin'`. Retorna `403 Forbidden` se o usuário logado não possuir privilégios administrativos.
+- **Autenticação**: Obrigatória via Bearer JWT (Supabase Auth HS256).
+- **Autorização**: Validação da claim `role == 'admin'`, `app_metadata.role == 'admin'`, `user_metadata.role == 'admin'` ou presença do identificador `user_id` na lista `ADMIN_USER_IDS`. Retorna `403 Forbidden` se o usuário logado não possuir privilégios administrativos.
 - **Exemplo de Resposta `200 OK`**:
 ```json
 {
@@ -619,7 +700,7 @@ patient.scan_logs.create(
 
 ### 5.2 Propósitos e Benefícios da Telemetria
 1. **Rastreabilidade e Segurança Jurídica**: Permite auditar quando, em qual horário e de qual IP a ficha foi consultada.
-2. **Notificação em Tempo Real (Solid Queue)**: Na evolução de mensageria assíncrona, a gravação servirá como evento/trigger para disparar alertas aos contatos prioritários (WhatsApp/SMS/Push: *"Atenção: A ficha de emergência de Maria Francisca acaba de ser acessada por um socorrista"*).
+2. **Notificação em Tempo Real (Solid Queue & Realtime)**: Na evolução de mensageria assíncrona, a gravação servirá como evento/trigger para disparar alertas aos contatos prioritários (WhatsApp/SMS/Push: *"Atenção: A ficha de emergência de Maria Francisca acaba de ser acessada por um socorrista"*).
 3. **Detecção de Anomalias e Scraping**: Identificação de acessos repetitivos ou tentativas de força bruta em tokens públicos.
 
 ---
@@ -633,6 +714,7 @@ A suíte de testes utiliza `rspec-rails` com `FactoryBot::Syntax::Methods` habil
 ```ruby
 FactoryBot.define do
   factory :patient do
+    user_id { SecureRandom.uuid }
     clerk_user_id { "user_test_#{SecureRandom.hex(4)}" }
     display_name { "Francisca" }
     full_name { "Maria Francisca dos Santos" }
@@ -661,15 +743,14 @@ end
 O backend requer as seguintes variáveis configuradas no arquivo `.env` (ou no ambiente de container/produção):
 
 ```bash
-# Banco de Dados PostgreSQL
-DATABASE_HOST=localhost
-DATABASE_PORT=5432
-DATABASE_USERNAME=postgres
-DATABASE_PASSWORD=postgres
-SOSQR_API_DATABASE=sosqr_api_development
+# Conexão PostgreSQL direta ao Supabase via Session Pooler (porta 5432)
+DATABASE_URL="postgresql://postgres.<project_ref>:<password>@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
 
-# Autenticação Clerk (Chave Pública PEM obtida no dashboard do Clerk)
-CLERK_PEM_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...\n-----END PUBLIC KEY-----"
+# Chave secreta de validação JWT do Supabase Auth (Dashboard Supabase -> Project Settings -> API -> JWT Settings)
+SUPABASE_JWT_SECRET="sua_supabase_jwt_secret_aqui..."
+
+# Lista opcional de UUIDs de administradores separados por vírgula
+ADMIN_USER_IDS="00000000-0000-0000-0000-000000000000"
 
 # Ambiente Rails
 RAILS_ENV=development
@@ -681,6 +762,8 @@ PORT=3000
 ## 8. Evolução Arquitetural e Roadmap
 
 1. **Background Jobs com Solid Queue (Rails 8)**: Desacoplar a gravação de `ScanLog` do ciclo síncrono da requisição HTTP pública para garantir latência de resposta $< 40$ms.
-2. **Mensageria e Notificações de Resgate**: Disparo assíncrono de notificações de emergência (SMS/WhatsApp/Push) aos contatos primários cadastrados no momento da leitura do QR Code.
-3. **Rate Limiting com `Rack::Attack`**: Proteção contra abusos, scripts de varredura e negação de serviço (DoS) nas rotas públicas `/emergency/:public_token`.
-4. **Webhooks do Clerk**: Sincronização automática para expurgo ou anonimização de prontuários caso a conta seja encerrada (Art. 18, VI da LGPD).
+2. **Supabase Realtime para Alertas Imediatos**: Broadcast de eventos de leitura de QR Code via canal Realtime do Supabase (`patients:scanned`) para atualização instantânea do dashboard do cuidador e push notifications.
+3. **Supabase Storage para Documentos Médicos**: Upload e armazenamento seguro de receitas, carteirinhas de planos e laudos de exames complementares em bucket protegido com RLS.
+4. **Rate Limiting com `Rack::Attack`**: Proteção contra abusos, scripts de varredura e negação de serviço (DoS) nas rotas públicas `/emergency/:public_token`.
+5. **PostgreSQL Triggers & Supabase Auth Hooks**: Sincronização automática para expurgo ou anonimização de prontuários caso a conta seja encerrada (Art. 18, VI da LGPD).
+

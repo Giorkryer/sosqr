@@ -21,6 +21,7 @@ module Api
           gender: patient.gender,
           blood_type: patient.blood_type,
           organ_donor: patient.organ_donor,
+          sus_number: patient.sus_number,
           medical_notes: patient.medical_notes,
           medical_devices: patient.medical_devices || [],
           health_insurance_name: patient.health_insurance_name,
