@@ -25,6 +25,9 @@
 # Any libraries that use a connection pool or another resource pool should
 # be configured to provide at least as many connections as the number of
 # threads. This includes Active Record's `pool` parameter in `database.yml`.
+# Modo single (0 workers) para economizar memória e evitar crash na camada gratuita (512MB) do Render
+workers ENV.fetch("WEB_CONCURRENCY", 0)
+
 threads_count = ENV.fetch("RAILS_MAX_THREADS", 3)
 threads threads_count, threads_count
 

@@ -13,6 +13,8 @@ services:
         value: info
       - key: RAILS_MAX_THREADS
         value: 5
+      - key: WEB_CONCURRENCY
+        value: 0
       - key: SECRET_KEY_BASE
         generateValue: true
       - key: DATABASE_URL
