@@ -33,6 +33,7 @@ interface PatientFormData {
   health_insurance_name: string;
   health_insurance_number: string;
   medical_notes?: string;
+  sus_number?: string;
   allergies: string[];
   chronic_conditions: string[];
   medications_in_use: string[];
@@ -55,6 +56,7 @@ const INITIAL_FORM: PatientFormData = {
   health_insurance_name: '',
   health_insurance_number: '',
   medical_notes: '',
+  sus_number: '',
   allergies: [],
   chronic_conditions: [],
   medications_in_use: [],
@@ -92,14 +94,12 @@ const ToggleSwitch: FC<{
     className="flex items-center gap-2 cursor-pointer focus:outline-none select-none"
   >
     <div
-      className={`w-12 h-6 flex items-center rounded-full p-1 transition-colors duration-200 ${
-        checked ? 'bg-[#0B6651]' : 'bg-stone-300'
-      }`}
+      className={`w-12 h-6 flex items-center rounded-full p-1 transition-colors duration-200 ${checked ? 'bg-[#0B6651]' : 'bg-stone-300'
+        }`}
     >
       <div
-        className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-200 ${
-          checked ? 'translate-x-6' : 'translate-x-0'
-        }`}
+        className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-200 ${checked ? 'translate-x-6' : 'translate-x-0'
+          }`}
       />
     </div>
     <span className="text-xs font-bold text-stone-700 min-w-[28px]">
@@ -147,18 +147,19 @@ export const PatientFormPage: FC = () => {
             health_insurance_name: data.health_insurance_name || '',
             health_insurance_number: data.health_insurance_number || '',
             medical_notes: data.medical_notes || '',
+            sus_number: data.sus_number || '',
             allergies: Array.isArray(data.allergies) ? data.allergies : [],
             chronic_conditions: Array.isArray(data.chronic_conditions) ? data.chronic_conditions : [],
             medications_in_use: Array.isArray(data.medications_in_use) ? data.medications_in_use : [],
             medical_devices: Array.isArray(data.medical_devices) ? data.medical_devices : [],
             emergency_contacts_attributes: Array.isArray(data.emergency_contacts)
               ? data.emergency_contacts.map((c: EmergencyContactForm) => ({
-                  id: c.id,
-                  name: c.name || '',
-                  phone_number: formatPhone(c.phone_number || ''),
-                  relationship: c.relationship || 'Filho(a)',
-                  is_primary: Boolean(c.is_primary),
-                }))
+                id: c.id,
+                name: c.name || '',
+                phone_number: formatPhone(c.phone_number || ''),
+                relationship: c.relationship || 'Filho(a)',
+                is_primary: Boolean(c.is_primary),
+              }))
               : INITIAL_FORM.emergency_contacts_attributes,
           });
         })
@@ -280,11 +281,12 @@ export const PatientFormPage: FC = () => {
 
     const payload = {
       ...formData,
-      cpf: formData.cpf.replace(/\D/g, ''),
+      cpf: formData.cpf ? formData.cpf.replace(/\D/g, '') : '',
+      sus_number: formData.sus_number ? formData.sus_number.replace(/\D/g, '') : '',
       display_name: formData.display_name.trim() || formData.full_name.trim().split(' ')[0],
-      emergency_contacts_attributes: formData.emergency_contacts_attributes.map((c) => ({
+      emergency_contacts_attributes: (formData.emergency_contacts_attributes || []).map((c) => ({
         ...c,
-        phone_number: c.phone_number.replace(/\D/g, ''),
+        phone_number: c.phone_number ? c.phone_number.replace(/\D/g, '') : '',
       })),
     };
 
@@ -295,9 +297,14 @@ export const PatientFormPage: FC = () => {
         await api.post('/patients', { patient: payload });
       }
       navigate('/dashboard');
-    } catch {
-      console.warn('[SOSqr] Backend offline. Salvamento local simulado.');
-      navigate('/dashboard');
+    } catch (err: unknown) {
+      console.error('[SOSqr] Erro ao salvar prontuário:', err);
+      const apiErr = err as { response?: { data?: { error?: string; errors?: string[] } } };
+      const message =
+        apiErr.response?.data?.error ||
+        apiErr.response?.data?.errors?.join(', ') ||
+        'Erro ao comunicar com o servidor. Verifique se você está autenticado.';
+      setErrorMessage(message);
     } finally {
       setIsSaving(false);
     }
@@ -370,11 +377,10 @@ export const PatientFormPage: FC = () => {
                 onBlur={() => setCpfTouched(true)}
                 placeholder="123.456.789-01"
                 maxLength={14}
-                className={`w-full px-3.5 py-2.5 bg-white border rounded-xl text-sm font-medium focus:outline-none transition-colors ${
-                  showCpfError
-                    ? 'border-rose-500 focus:border-rose-600 focus:ring-1 focus:ring-rose-600'
-                    : 'border-stone-300 focus:border-teal-700 focus:ring-1 focus:ring-teal-700'
-                }`}
+                className={`w-full px-3.5 py-2.5 bg-white border rounded-xl text-sm font-medium focus:outline-none transition-colors ${showCpfError
+                  ? 'border-rose-500 focus:border-rose-600 focus:ring-1 focus:ring-rose-600'
+                  : 'border-stone-300 focus:border-teal-700 focus:ring-1 focus:ring-teal-700'
+                  }`}
                 aria-invalid={showCpfError}
               />
               {showCpfError && (
@@ -397,6 +403,20 @@ export const PatientFormPage: FC = () => {
                   className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm font-medium focus:outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700 transition-colors"
                 />
               </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-stone-700 block">
+                Número do SUS
+              </label>
+              <input
+                type="text"
+                value={formData.sus_number}
+                onChange={(e) => setFormData({ ...formData, sus_number: e.target.value })}
+                placeholder="1234567890123"
+                maxLength={15}
+                className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm font-medium focus:outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700 transition-colors"
+              />
             </div>
 
             <div className="space-y-1.5">
@@ -439,11 +459,10 @@ export const PatientFormPage: FC = () => {
                       key={bt}
                       type="button"
                       onClick={() => setFormData({ ...formData, blood_type: bt })}
-                      className={`py-1.5 px-2 rounded-lg text-xs font-extrabold transition-all text-center ${
-                        isSelected
-                          ? 'bg-[#0B6651] text-white shadow-xs'
-                          : 'bg-white border border-stone-300 text-stone-700 hover:bg-stone-50'
-                      }`}
+                      className={`py-1.5 px-2 rounded-lg text-xs font-extrabold transition-all text-center ${isSelected
+                        ? 'bg-[#0B6651] text-white shadow-xs'
+                        : 'bg-white border border-stone-300 text-stone-700 hover:bg-stone-50'
+                        }`}
                     >
                       {bt}
                     </button>

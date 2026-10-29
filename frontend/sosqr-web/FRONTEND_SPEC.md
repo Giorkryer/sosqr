@@ -19,8 +19,8 @@ O **SOSqr Frontend** é uma plataforma para gestão e visualização imediata de
 | **Vite** | `8.3.x` | Build tool e dev server ultra-rápido baseado em ES modules nativos. |
 | **TypeScript** | `5.8.x` / `6.x` | Tipagem estática rigorosa (`strict: true`), prevenindo bugs em tempo de compilação. |
 | **Tailwind CSS** | `3.4.x` | Estilização utilitária com Design System customizado e zero overhead de runtime CSS. |
-| **@clerk/clerk-react** | `5.61.x` | Autenticação gerenciada, emissão de JWT RS256 e proteção de rotas sem senhas locais. |
-| **Axios** | `1.20.x` | Cliente HTTP com interceptors para injeção do Bearer Token do Clerk e tratamento de erros. |
+| **@supabase/supabase-js** | `^2.118.x` | Autenticação gerenciada (Supabase Auth com JWT HS256), client nativo para Postgres, RLS e Realtime. |
+| **Axios** | `1.20.x` | Cliente HTTP com interceptor para injeção automática do Bearer Token da sessão Supabase. |
 | **qrcode.react** | `4.2.x` | Geração de QR Code vetorial (`QRCodeSVG`) e canvas oculto para extração de PNG a 300 DPI. |
 | **@react-pdf/renderer**| `4.9.x` | Renderização e exportação de PDF vetorial do cartão físico CR80 (client-side) a 300 DPI. |
 | **lucide-react** | `1.47.x` | Iconografia consistente, leve e semanticamente acessível. |
@@ -114,10 +114,17 @@ A estrutura em `frontend/sosqr-web/src` organiza-se por camadas de domínio, com
 frontend/sosqr-web/src/
 ├── assets/                 # Recursos estáticos e imagens
 ├── components/             # Componentes globais compartilhados
+│   ├── AdminRoute.tsx          # Guarda de rota administrativa
 │   ├── DeletePatientModal.tsx  # Modal de confirmação segura de exclusão
-│   └── ...
+│   └── ui/                     # Botões e primitivos do Design System
 ├── features/               # Módulos verticais de domínio
-│   ├── auth/               # Customização e wrappers de autenticação Clerk
+│   ├── admin/              # Componentes de métricas e auditoria administrativa
+│   │   └── components/
+│   │       ├── AdminGuard.tsx  # Validador de permissão role: admin
+│   │       └── ...
+│   ├── auth/               # Autenticação nativa Supabase
+│   │   ├── AuthContext.tsx # Contexto e hook useAuth (sessão, login, registro, logout)
+│   │   └── AuthPage.tsx    # Tela de autenticação nativa (Cuidado Suave)
 │   ├── card-issue/         # Emissão de cartão físico CR80
 │   │   ├── pdf/
 │   │   │   └── EmergencyCardDocument.tsx  # Documento vetorial @react-pdf/renderer
@@ -127,8 +134,10 @@ frontend/sosqr-web/src/
 │       │   └── PatientCard.tsx       # Card de perfil no dashboard
 │       ├── types/
 │       │   └── index.ts              # Interfaces do domínio de pacientes
-├── layouts/
-│   └── DashboardLayout.tsx # Layout privado com header, avatar e navegação
+│ ├── layouts/
+│   └── DashboardLayout.tsx # Layout privado com header, avatar com iniciais e logout
+├── lib/
+│   └── supabase.ts         # Cliente oficial Supabase (@supabase/supabase-js)
 ├── pages/                  # Páginas conectadas às rotas
 │   ├── CardIssuePage.tsx        # Emissão e preview do Cartão CR80
 │   ├── DashboardPage.tsx        # Painel de Perfis
@@ -136,15 +145,15 @@ frontend/sosqr-web/src/
 │   ├── PatientFormPage.tsx      # Formulário em 3 colunas (criação e edição)
 │   └── AdminDashboardPage.tsx   # Painel analítico de administração
 ├── services/
-│   └── api.ts              # Instância Axios com interceptor de JWT Clerk
+│   └── api.ts              # Instância Axios com interceptor de JWT do Supabase
 ├── types/
 │   └── index.ts            # Tipos e enums transversais (BloodType, etc.)
 ├── utils/
 │   ├── calculateAge.ts     # Cálculo de idade inteira
 │   ├── cpf.ts              # Formatação e validação algorítmica de CPF (Módulo 11)
 │   └── validateCpf.ts      # Validador desacoplado para testes
-├── App.tsx                 # Roteador central e sincronizador de tokens
-├── main.tsx                # Entrada React com ClerkProvider
+├── App.tsx                 # Roteador central SPA
+├── main.tsx                # Entrada React com AuthProvider do Supabase
 └── index.css               # Importação de fontes e diretivas Tailwind
 ```
 
@@ -156,8 +165,8 @@ frontend/sosqr-web/src/
 
 | Rota | Acesso | Componente / Tela | Descrição |
 | :--- | :---: | :--- | :--- |
-| `/login/*` | Público | `<SignIn />` (Clerk) | Autenticação com identidade visual SOSqr. |
-| `/cadastro/*` | Público | `<SignUp />` (Clerk) | Criação de conta. |
+| `/login` | Público | `<AuthPage initialMode="sign-in" />` | Autenticação nativa (Email/Senha ou Google) com identidade visual SOSqr. |
+| `/cadastro` | Público | `<AuthPage initialMode="sign-up" />` | Criação de conta do cuidador. |
 | `/emergency/:public_token` | **Público** | `EmergencyProfilePage` | Ficha pública vital de resgate (suporta `:public_token = demo`). |
 | `/` ou `/dashboard` | Autenticado | `DashboardPage` | Painel de Perfis: listagem, auditoria de scans e atalhos rápidos. |
 | `/pacientes/novo` | Autenticado | `PatientFormPage` | Cadastro de perfil em grid de 3 colunas temáticas. |
@@ -169,14 +178,17 @@ frontend/sosqr-web/src/
 
 ### 4.2 Detalhamento de Cada Tela
 
-#### 1. `/login/*` e `/cadastro/*` (Telas de Autenticação)
-- **Tecnologia**: Componentes `<SignIn />` e `<SignUp />` da biblioteca `@clerk/clerk-react`.
+#### 1. `/login` e `/cadastro` (Telas de Autenticação)
+- **Tecnologia**: Componente nativo `AuthPage.tsx` integrado ao Supabase Auth via `AuthContext`.
 - **Estilização**:
   - Fundo em `stone-50` com seleção em `teal-50`/`teal-800`.
-  - Cabeçalho superior com badge institucional: ícone `HeartHandshake` em fundo `teal-700`, texto "SOSqr" e subtítulo "Acesso do Cuidador".
-- **Comportamento**:
-  - Redirecionamento automático pós-autenticação para `/dashboard`.
-  - Link recíproco entre login e cadastro.
+  - Cabeçalho superior com badge institucional: ícone `HeartHandshake` em fundo `#0B6651`, texto "SOSqr" e subtítulo "Acesso do Cuidador".
+  - Opção de login com Email/Senha e Social Login direto com Google (`signInWithOAuth`).
+- **Comportamento e Resiliência**:
+  - **Redirecionamento Pós-Autenticação**: Direcionamento automático para `/dashboard`.
+  - **Feedback no Botão Social**: Estado `oauthLoading` com spinner (`Loader2`) e rótulo animado "Conectando com o Google..." para prevenir duplo clique.
+  - **Tratamento de Erros via URL e Callbacks**: O componente escuta parâmetros de URL (`?error_description=...` ou hash fragments `#error=...`). Erros conhecidos como `validation_failed` ou `provider is not enabled` são capturados e convertidos em alertas educativos em português, orientando a ativação do provedor no Supabase Dashboard.
+  - **Alternância Fluida**: Transição instantânea entre login e cadastro sem reload de página.
 
 ---
 
@@ -281,7 +293,7 @@ frontend/sosqr-web/src/
 ---
 
 #### 6. `/admin` (Painel Administrativo Restrito)
-- **Controle de Acesso**: Validação de claim/role `admin` no usuário do Clerk (`user?.publicMetadata?.role === 'admin'`). Cuidadores sem privilégio são redirecionados com aviso de acesso negado.
+- **Controle de Acesso**: Validação de claim/role `admin` no usuário do Supabase Auth (`user?.app_metadata?.role === 'admin' || user?.user_metadata?.role === 'admin'`). Cuidadores sem privilégio administrativo são interceptados pelo `<AdminGuard />` e redirecionados para o `/dashboard` com aviso visual de acesso negado.
 - **KPIs em Destaque**:
   - **"Total de Perfis Cadastrados"**
   - **"Total de Leituras QR Code"**
@@ -295,24 +307,22 @@ frontend/sosqr-web/src/
 
 ## 5. Gerenciamento de Estado e Ciclo de Comunicação com a API
 
-### 5.1 Sincronização Clerk e Axios (`src/services/api.ts`)
-A integração stateless do frontend com a API Rails 8 utiliza um mecanismo de sincronização dinâmica de tokens JWT RS256:
+### 5.1 Sincronização Supabase Auth e Axios (`src/services/api.ts`)
+A integração stateless do frontend com a API Rails 8 utiliza um interceptor nativo no Axios que obtém o access token (JWT HS256) diretamente da sessão ativa gerenciada pelo cliente oficial do Supabase Auth:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant React as React App (Componente)
-    participant Sync as ClerkTokenSync (App.tsx)
-    participant Clerk as Clerk SDK (useAuth)
-    participant Axios as Axios Interceptor (api.ts)
-    participant Rails as Rails 8 API
+    participant React as React App (Componentes / Hooks)
+    participant Axios as Axios Interceptor (services/api.ts)
+    participant Supabase as Supabase Client (supabase.auth)
+    participant Rails as Rails 8 API (sosqr-api)
 
-    Sync->>Axios: Registra tokenGetter(() => getToken())
     React->>Axios: api.get('/patients')
-    Axios->>Clerk: getToken() (JWT RS256 atualizado)
-    Clerk-->>Axios: Retorna session_token
-    Axios->>Rails: Header Authorization: Bearer <session_token>
-    Rails-->>Axios: 200 OK (Dados do paciente)
+    Axios->>Supabase: getSession() (Busca sessão ativa em cache local)
+    Supabase-->>Axios: Retorna session.access_token (JWT HS256)
+    Axios->>Rails: Header Authorization: Bearer <session.access_token>
+    Rails-->>Axios: 200 OK (Dados dos pacientes com user_id do token)
     Axios-->>React: Retorna res.data
 ```
 
@@ -342,16 +352,21 @@ Localizado em `src/utils/calculateAge.ts`:
 
 ## 7. Estratégia de Testes Automatizados (Vitest + React Testing Library)
 
-A aplicação conta com suíte automatizada de testes executada via `npm test`:
+A aplicação conta com suíte automatizada de testes (11 arquivos de especificação e 40 asserções) executada via `npm test`, utilizando mocks dedicados em `src/setupTests.ts` para o cliente Supabase Auth:
 
 | Arquivo de Teste | Alvo do Teste | Cenários Validados |
 | :--- | :--- | :--- |
+| `AuthPage.spec.tsx` | Autenticação e Google OAuth | Renderização da tela, disparo do fluxo `signInWithOAuth('google')`, tratamento visual de provedor desabilitado e detecção de erros via parâmetros de URL. |
 | `validateCpf.spec.ts` | Validador de CPF | CPFs válidos conhecidos, dígitos incorretos, sequências repetidas e caracteres não numéricos. |
 | `calculateAge.spec.ts` | Utilitário de Idade | Idade exata para aniversários já ocorridos, aniversários futuros no mesmo ano e anos bissextos. |
-| `api.spec.ts` | Interceptors Axios | Anexação correta de headers, tratamento de fallback e captura de status 401/404. |
-| `PatientCard.spec.tsx` | Componente de Card | Renderização de nome, badges de sangue, cálculo de idade, último scan e acionamento de modal. |
+| `lib/api.spec.ts` | Interceptors Axios | Injeção de Bearer token via `supabase.auth.getSession()`, headers de requisição e captura de erros. |
+| `PatientCard.spec.tsx` | Componente de Card | Renderização de nome, badges de sangue, cálculo de idade, último scan e acionamento de modal de exclusão. |
 | `EmergencyProfilePage.spec.tsx`| Ficha Pública | Exibição de alertas críticos (tipo sanguíneo, alergias), dados de convênio e botões de socorro `tel:`. |
-| `PatientFormPage.spec.tsx` | Formulário de Idoso | Exibição de erro visual para CPF inválido e bloqueio de submissão do formulário. |
+| `PatientFormPage.spec.tsx` | Formulário de Prontuário | Exibição de erro visual para CPF inválido, gerenciamento dinâmico de tags e bloqueio de submissão inválida. |
+| `AdminGuard.spec.tsx` | Guarda de Rota Admin | Permite acesso para `app_metadata.role === 'admin'` e redireciona usuários comuns para `/dashboard`. |
+| `AdminKpiCard.spec.tsx` | Cards de Métricas Admin | Renderização de títulos, valores quantitativos formatados, ícones e variações de cor. |
+| `RecentScansTable.spec.tsx` | Tabela de Auditoria | Listagem dos últimos 50 scans, dados de IP, User-Agent, formatação de data e filtro em tempo real. |
+| `AdminDashboardPage.spec.tsx` | Painel de Administração | Integração das métricas, carregamento de auditoria e tratamento de estados vazios. |
 
 ---
 
@@ -362,10 +377,17 @@ O frontend consome as seguintes variáveis no arquivo `.env`:
 ```bash
 # URL base da API RESTful Rails
 VITE_API_URL=http://localhost:3000/api/v1
+VITE_PUBLIC_APP_URL=http://localhost:5173
 
-# Chave Pública Publicável do Clerk (Dashboard Clerk -> API Keys)
-VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
+# Supabase Auth e Cliente Oficial (@supabase/supabase-js)
+VITE_SUPABASE_URL=https://<seu-projeto>.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
+
+> **Configuração de OAuth (Google) no Supabase Dashboard:**
+> - **Redirect URI autorizado no Google Cloud Console**: `https://<seu-projeto>.supabase.co/auth/v1/callback`
+> - **Site URL no Supabase (Auth > URL Configuration)**: `http://localhost:5173`
+> - **Redirect URLs permitidos no Supabase**: `http://localhost:5173/**` e `http://localhost:5173/dashboard`
 
 ---
 

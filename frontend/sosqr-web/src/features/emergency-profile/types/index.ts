@@ -20,6 +20,7 @@ export interface EmergencyProfile {
   age?: number;
   gender?: string;
   blood_type: BloodType;
+  sus_number?: string;
   medical_devices: string[];
   health_insurance_name?: string;
   health_insurance_number?: string;

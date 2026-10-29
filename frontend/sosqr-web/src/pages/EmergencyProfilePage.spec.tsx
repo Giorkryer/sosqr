@@ -84,7 +84,7 @@ describe('EmergencyProfilePage (Ficha Pública de Emergência)', () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/MEDICAMENTOS CRÍTICOS EM USO \(Risco Cirúrgico\/Sangramento\):/i)
+        screen.getByText(/MEDICAMENTOS EM USO:/i)
       ).toBeInTheDocument();
     });
 

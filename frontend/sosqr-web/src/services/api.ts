@@ -1,5 +1,7 @@
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from 'axios';
 
+import { supabase } from '../lib/supabase';
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1';
 
 /**
@@ -17,8 +19,7 @@ export const api: AxiosInstance = axios.create({
 let tokenGetter: (() => Promise<string | null>) | null = null;
 
 /**
- * Registra a função de recuperação de token do Clerk (getToken).
- * Chamada na inicialização do ciclo React pelo ClerkTokenSync.
+ * Registra a função customizada de recuperação de token (se necessário).
  */
 export const setAuthTokenGetter = (getter: () => Promise<string | null>) => {
   tokenGetter = getter;
@@ -26,8 +27,7 @@ export const setAuthTokenGetter = (getter: () => Promise<string | null>) => {
 
 /**
  * Interceptor de requisições do Axios:
- * Utiliza o método getToken() do Clerk para anexar o header Authorization: Bearer <token>
- * em todas as requisições autenticadas enviadas ao backend.
+ * Anexa o token JWT de sessão do Supabase no cabeçalho Authorization: Bearer <token>
  */
 api.interceptors.request.use(
   async (config: InternalAxiosRequestConfig) => {
@@ -38,25 +38,16 @@ api.interceptors.request.use(
         token = await tokenGetter();
       }
 
-      if (!token && typeof window !== 'undefined') {
-        const clerk = (window as unknown as {
-          Clerk?: {
-            session?: {
-              getToken: () => Promise<string | null>;
-            };
-          };
-        }).Clerk;
-
-        if (clerk?.session?.getToken) {
-          token = await clerk.session.getToken();
-        }
+      if (!token) {
+        const { data } = await supabase.auth.getSession();
+        token = data.session?.access_token ?? null;
       }
 
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
     } catch (error) {
-      console.error('[SOSqr API] Falha ao anexar token do Clerk na requisição:', error);
+      console.error('[SOSqr API] Falha ao anexar token do Supabase na requisição:', error);
     }
 
     return config;

@@ -22,6 +22,7 @@ export interface ScanLog {
 
 export interface Patient {
   id: number;
+  user_id?: string;
   clerk_user_id?: string;
   public_token: string;
   display_name: string;
@@ -56,5 +57,5 @@ export interface Patient {
 
 export type PatientFormData = Omit<
   Patient,
-  'id' | 'clerk_user_id' | 'public_token' | 'created_at' | 'updated_at' | 'age'
+  'id' | 'user_id' | 'clerk_user_id' | 'public_token' | 'created_at' | 'updated_at' | 'age'
 >;

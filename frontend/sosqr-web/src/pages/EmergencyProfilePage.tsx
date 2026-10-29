@@ -20,6 +20,7 @@ export interface EmergencyProfile {
   blood_type: string;
   organ_donor?: boolean;
   medical_notes?: string;
+  sus_number?: string;
   medical_devices: string[];
   health_insurance_name?: string;
   health_insurance_number?: string;
@@ -258,22 +259,22 @@ export const EmergencyProfilePage: FC = () => {
               <p className="text-stone-600 font-semibold text-sm sm:text-base mt-1">
                 ({profile.age} anos / {formatDateBR(profile.birth_date)})
               </p>
+              <p>Gênero: {profile.gender}</p>
+              <p>Número do SUS: {profile.sus_number}</p>
             </div>
 
             <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+              <div className="text-left hidden sm:block">
+                <span className="text-xs font-black text-stone-800 leading-tight block uppercase">
+                  Tipo Sanguíneo
+                </span>
+              </div>
               <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-rose-500 text-white flex flex-col items-center justify-center shadow-md shrink-0">
                 <span className="text-2xl sm:text-3xl font-black leading-none">
                   {profile.blood_type}
                 </span>
                 <span className="text-[10px] sm:text-xs font-semibold mt-0.5 opacity-95">
                   {formatBloodRh(profile.blood_type)}
-                </span>
-              </div>
-              <div className="text-left hidden sm:block">
-                <span className="text-xs font-black text-stone-800 leading-tight block uppercase">
-                  Tipo Sanguíneo /
-                  <br />
-                  Fator Rh
                 </span>
               </div>
             </div>
@@ -297,7 +298,7 @@ export const EmergencyProfilePage: FC = () => {
             <div className="bg-white border-2 border-rose-300 rounded-xl p-3 sm:p-4 flex items-start sm:items-center gap-2.5 sm:gap-3 text-rose-950 shadow-xs">
               <div className="text-xs sm:text-sm leading-snug">
                 <strong className="font-extrabold text-rose-900 tracking-tight mr-1.5">
-                  MEDICAMENTOS CRÍTICOS EM USO (Risco Cirúrgico/Sangramento):
+                  MEDICAMENTOS EM USO:
                 </strong>
                 <span className="font-bold text-stone-900">
                   {Array.isArray(profile.medications_in_use)
@@ -325,11 +326,10 @@ export const EmergencyProfilePage: FC = () => {
                   return (
                     <span
                       key={idx}
-                      className={`text-xs font-bold px-3.5 py-1.5 rounded-full inline-flex items-center ${
-                        isHighAlert
-                          ? 'bg-stone-900 text-white shadow-xs'
-                          : 'bg-stone-200/90 text-stone-800'
-                      }`}
+                      className={`text-xs font-bold px-3.5 py-1.5 rounded-full inline-flex items-center ${isHighAlert
+                        ? 'bg-stone-900 text-white shadow-xs'
+                        : 'bg-stone-200/90 text-stone-800'
+                        }`}
                     >
                       {item}
                     </span>

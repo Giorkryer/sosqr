@@ -33,3 +33,5 @@ export type ContactRelationship =
   | 'Médico(a)'
   | 'Vizinho(a)'
   | 'Outro';
+
+export * from './admin';
