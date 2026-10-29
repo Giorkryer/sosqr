@@ -1,16 +1,21 @@
 module Api
   module V1
     class EmergencyProfilesController < ApplicationController
+      skip_before_action :authenticate_user!, only: [:show], raise: false
       skip_before_action :authenticate_clerk_user!, only: [:show], raise: false
 
       def show
         patient = Patient.includes(:emergency_contacts).find_by!(public_token: params[:public_token])
 
-        patient.scan_logs.create(
-          ip_address: request.remote_ip,
-          user_agent: request.user_agent,
-          scanned_at: Time.current
-        )
+        begin
+          patient.scan_logs.create(
+            ip_address: request.remote_ip,
+            user_agent: request.user_agent,
+            scanned_at: Time.current
+          )
+        rescue StandardError => e
+          Rails.logger.warn("[SOSqr] Falha não impeditiva ao registrar log de escaneamento: #{e.message}")
+        end
 
         render json: {
           public_token: patient.public_token,
@@ -38,7 +43,7 @@ module Api
             }
           }
         }, status: :ok
-      rescue ActiveRecord::RecordNotFound
+      rescue ActiveRecord::RecordNotFound, ActiveRecord::StatementInvalid
         render json: { error: 'Ficha de emergência não encontrada' }, status: :not_found
       end
     end

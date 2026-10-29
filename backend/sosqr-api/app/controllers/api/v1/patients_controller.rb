@@ -26,7 +26,7 @@ module Api
         @patient.clerk_user_id = @current_user_id if @patient.respond_to?(:clerk_user_id=)
 
         if @patient.save
-          render json: @patient, status: :created
+          render json: @patient.as_json(include: :emergency_contacts, methods: [:last_scan, :age]), status: :created
         else
           render json: { errors: @patient.errors.full_messages }, status: :unprocessable_entity
         end
@@ -34,7 +34,7 @@ module Api
 
       def update
         if @patient.update(patient_params)
-          render json: @patient, status: :ok
+          render json: @patient.as_json(include: :emergency_contacts, methods: [:last_scan, :age]), status: :ok
         else
           render json: { errors: @patient.errors.full_messages }, status: :unprocessable_entity
         end

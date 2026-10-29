@@ -4,6 +4,7 @@ module Api
       class DashboardController < Api::V1::Admin::BaseController
         def index
           total_patients = Patient.count
+          total_scans = ScanLog.count
           caregiver_col = Patient.column_names.include?('user_id') ? :user_id : :clerk_user_id
           total_caregivers = Patient.distinct.count(caregiver_col)
           scans_today = ScanLog.where('scanned_at >= ?', Time.current.beginning_of_day).count

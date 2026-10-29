@@ -118,7 +118,8 @@ export const EmergencyProfilePage: FC = () => {
         setProfile(res.data);
         setIsNotFound(false);
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error('[SOSqr] Erro ao carregar ficha de emergência:', err);
         setIsNotFound(true);
         setProfile(null);
       })
