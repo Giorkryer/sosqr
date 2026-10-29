@@ -20,6 +20,4 @@ services:
       - key: SUPABASE_JWT_SECRET
         sync: false
       - key: ALLOWED_ORIGINS
-        sync: false
-      - key: ADMIN_USER_IDS
-        sync: false
+        value: https://sosqr.vercel.app,http://localhost:5173
