@@ -25,32 +25,32 @@ flowchart TD
     end
 
     subgraph Provedor de Identidade e Dados
-        C[Supabase Auth\n(JWT HS256 / Session)]
+        C[Supabase Auth\n(JWT ES256 / HS256 / Session)]
         DB[(Supabase PostgreSQL 16+\nRow Level Security RLS\nSession Pooler 5432 & pgcrypto)]
     end
 
     subgraph Backend - sosqr-api Rails 8
-        D[ApplicationController\nFiltro JWT HS256 & Extração de sub / user_id]
-        D_ADMIN[Admin::BaseController\nValidação de Claim role: admin ou ADMIN_USER_IDS]
+        D[ApplicationController\nFiltro JWT: JWKS ES256, Secret HS256 ou Fallback Auth API]
+        D_ADMIN[Admin::BaseController\nValidação de Claim role: admin ou ADMIN_*_IDS]
         E[Api::V1::PatientsController\nCRUD Autenticado do Cuidador]
         F[Api::V1::EmergencyProfilesController\nFicha Pública via public_token]
-        G_ADMIN[Api::V1::Admin::DashboardController\nKPIs Agregados & Auditoria]
-        H[ScanLog Recorder\nAuditoria Silenciosa de Leituras]
+        G_ADMIN[Api::V1::Admin::DashboardController\nKPIs Agregados, Scans Hoje & Auditoria com IP Mascarado]
+        H[ScanLog Recorder\nAuditoria Silenciosa e Resiliente de Leituras]
     end
 
-    A -- "1. Login / Obter JWT HS256" --> C
+    A -- "1. Login / Obter JWT ES256/HS256" --> C
     A -- "2. Header: Authorization Bearer JWT" --> D
-    D -- "3. Valida HS256 secret & extrai sub" --> E
+    D -- "3. Valida JWKS/Secret & extrai sub/id" --> E
     E -- "4. CRUD isolado por user_id" --> DB
 
     B -- "Leitura QR Code: GET /api/v1/emergency/:public_token" --> F
-    F -- "Grava telemetria silenciosa" --> H
+    F -- "Grava telemetria silenciosa (não-bloqueante)" --> H
     H --> DB
-    F -- "Retorna dados vitais de socorro (LGPD Safe)" --> B
+    F -- "Retorna dados vitais de socorro + SUS (LGPD Safe)" --> B
 
     ADM -- "1. Header: Bearer JWT com role admin" --> D_ADMIN
-    D_ADMIN -- "2. Verifica claim/role ou ADMIN_USER_IDS" --> G_ADMIN
-    G_ADMIN -- "3. Consulta agregações e histórico" --> DB
+    D_ADMIN -- "2. Verifica claims de role ou ADMIN_*_IDS" --> G_ADMIN
+    G_ADMIN -- "3. Retorna KPIs, scans_today e IPs mascarados" --> DB
 ```
 
 ### 1.3 Stack Tecnológica
@@ -59,16 +59,16 @@ flowchart TD
 | :--- | :--- | :--- | :--- |
 | **Linguagem** | Ruby | `3.3.5` (`.ruby-version`) | Alta performance com YJIT e estabilidade moderna. |
 | **Framework** | Ruby on Rails | `8.1.3` (Modo API) | `config.api_only = true`: elimina overhead de views/cookies/assets para latência mínima. |
-| **Banco de Dados** | PostgreSQL no Supabase | `16+` com `pgcrypto` & `RLS` | Banco gerenciado com Row Level Security (RLS) ativo em todas as tabelas e pooler de sessões. |
-| **Servidor de Aplicação**| Puma | `>= 5.0` | Servidor concorrente multithread de padrão industrial. |
-| **Autenticação** | Supabase Auth | JWT simétrico (HS256) | Autenticação gerenciada compatível com padrão BaaS, sem armazenamento de senhas locais na API. |
+| **Banco de Dados** | PostgreSQL no Supabase | `16+` com `pgcrypto` & `RLS` | Banco gerenciado com RLS em todas as tabelas, Session Pooler (porta 5432) e conexões unificadas para `primary`, `cache`, `queue` e `cable` com `sslmode: require`. |
+| **Servidor de Aplicação**| Puma | `6.x` | Servidor concorrente multithread configurado em modo single (`workers 0`, via `WEB_CONCURRENCY=0`) para otimização de memória (< 512MB) no Render/contêineres. |
+| **Autenticação** | Supabase Auth | JWT ES256 / HS256 | Autenticação gerenciada compatível com padrão BaaS (suporte a JWKS ES256, Secret HS256 e validação direta via `/auth/v1/user`), sem armazenamento de senhas locais na API. |
 | **Suíte de Testes** | RSpec & FactoryBot | `rspec-rails ~> 7.x`, `factory_bot_rails` | Testes automatizados BDD e mocks de integração declarativos. |
 
 ### 1.4 Dependências Críticas (`Gemfile`)
 
-- **`jwt`**: Decodificação e validação criptográfica de tokens HS256 emitidos pelo Supabase Auth (com fallback retrocompatível para RS256).
+- **`jwt`**: Decodificação e validação criptográfica de tokens ES256 (via JWKS) e HS256 emitidos pelo Supabase Auth.
 - **`dotenv-rails (~> 3.2)`**: Gerenciamento e injeção de variáveis de ambiente locais (`.env`) em desenvolvimento e testes.
-- **`rack-cors`**: Configuração de Cross-Origin Resource Sharing liberando requisições assíncronas do frontend web/mobile.
+- **`rack-cors`**: Configuração de Cross-Origin Resource Sharing liberando requisições assíncronas do frontend web/mobile (`ALLOWED_ORIGINS`).
 - **`json (~> 2.8)`**: Compatibilidade de parsing JSON no ecossistema Rails 8 e Ruby 3.3.
 - **`pg (~> 1.1)`**: Driver nativo do PostgreSQL para Active Record conectando ao Supabase via `DATABASE_URL`.
 
@@ -76,8 +76,10 @@ flowchart TD
 
 ## 2. Autenticação, Segurança e Conformidade LGPD
 
-### 2.1 Integração com Supabase Auth (HS256)
-A autenticação de usuários e administradores é 100% stateless e baseada em tokens JWT assinados pelo **Supabase Auth** utilizando o algoritmo simétrico **HS256**. Não há persistência de senhas ou hashes Bcrypt no banco de dados da API Rails.
+### 2.1 Integração com Supabase Auth (ES256, HS256 e Fallback API)
+A autenticação de usuários e administradores é 100% stateless e baseada em tokens JWT emitidos pelo **Supabase Auth**. Não há persistência de senhas ou hashes Bcrypt no banco de dados da API Rails.
+
+Como o Supabase Auth moderno utiliza o algoritmo assimétrico de curva elíptica **ES256** (ECDSA P-256) por padrão para novos projetos, além do algoritmo simétrico tradicional **HS256**, a API Rails implementa um fluxo de verificação em camadas robusto e resiliente com tolerância a desvio de relógio (*clock leeway* de 120s):
 
 #### Fluxo de Validação no `ApplicationController`:
 1. O cliente (React/Vite) envia o token no cabeçalho HTTP:
@@ -88,14 +90,24 @@ A autenticação de usuários e administradores é 100% stateless e baseada em t
    - Extrai o token do cabeçalho. Caso ausente:
      - Em ambiente `development`: injeta usuário de fallback `@current_user_id = 'dev_cuidador_local'` com role `admin` para permitir testes rápidos sem bloquear o fluxo.
      - Em produção: responde imediatamente com `401 Unauthorized`.
-   - Valida o token contra `ENV['SUPABASE_JWT_SECRET']` usando algoritmo `HS256`.
-   - Possui camada de fallback retrocompatível para `ENV['CLERK_PEM_PUBLIC_KEY']` (RS256) caso ainda existam tokens de transição.
-   - Extrai a claim `sub` (UUID do usuário no Supabase Auth), atribuindo-a a `@current_user_id`.
-   - Extrai a role administrativa a partir de `payload.dig('app_metadata', 'role')`, `payload.dig('user_metadata', 'role')` ou da variável `ADMIN_USER_IDS`, atribuindo a `@current_user_role`.
-   - Trata exceções `JWT::DecodeError` e `JWT::ExpiredSignature`, respondendo com status `401 Unauthorized`.
+   - **Camada 1 - Tokens Assimétricos (ES256 / RS256 via JWKS)**:
+     - Identifica o cabeçalho JWT (`alg`).
+     - Se `ES256` ou `RS256`, valida a assinatura criptográfica contra as chaves públicas oficiais do projeto Supabase obtidas dinamicamente do endpoint `https://<SUPABASE_PROJECT_ID>.supabase.co/auth/v1/.well-known/jwks.json` (`JWT::JWK::Set`).
+   - **Camada 2 - Tokens Simétricos (HS256 via Secret)**:
+     - Se `SUPABASE_JWT_SECRET` estiver configurado, valida a assinatura com algoritmo `HS256` (suportando tanto o formato em texto puro quanto a chave em base64 decodificada) com tolerância de 120s.
+   - **Camada 3 - Fallback Oficial Direto via API do Supabase**:
+     - Caso a validação local das camadas anteriores falhe, a API realiza uma requisição HTTPS direta e síncrona ao endpoint oficial `GET https://<SUPABASE_PROJECT_ID>.supabase.co/auth/v1/user` com o token e a `SUPABASE_ANON_KEY`, obtendo o perfil autenticado diretamente do provedor com timeout estrito de 4s.
+   - **Extração de Identidade e Privilégios**:
+     - Extrai o identificador único do usuário a partir das claims `sub` ou `id`, atribuindo a `@current_user_id`.
+     - Extrai a role administrativa a partir de `payload.dig('app_metadata', 'role')`, `payload.dig('user_metadata', 'role')`, `payload['role']`, ou por correspondência de ID com as variáveis `ADMIN_USER_IDS`, `ADMIN_SUPABASE_IDS` ou `ADMIN_CLERK_IDS`.
+   - Em caso de falha irreversível de verificação, registra log de advertência estruturado e responde com status `401 Unauthorized`.
 
 ```ruby
 # app/controllers/application_controller.rb
+require 'net/http'
+require 'json'
+require 'jwt'
+
 class ApplicationController < ActionController::API
   before_action :authenticate_user!
 
@@ -118,43 +130,105 @@ class ApplicationController < ActionController::API
       end
     end
 
-    # 2. Decodificação do Token
-    decoded = begin
-      if ENV['SUPABASE_JWT_SECRET'].present?
-        JWT.decode(token, ENV['SUPABASE_JWT_SECRET'], true, { algorithm: 'HS256' })
-      elsif ENV['CLERK_PEM_PUBLIC_KEY'].present?
-        rsa_public = OpenSSL::PKey::RSA.new(ENV['CLERK_PEM_PUBLIC_KEY'].gsub('\n', "\n"))
-        JWT.decode(token, rsa_public, true, { algorithm: 'RS256' })
-      elsif Rails.env.development?
-        JWT.decode(token, nil, false)
-      else
-        render json: { error: 'Chave de autenticação (SUPABASE_JWT_SECRET) não configurada no servidor' }, status: :internal_server_error
-        return
-      end
-    rescue JWT::DecodeError, JWT::ExpiredSignature => e
-      if Rails.env.development?
-        Rails.logger.warn "[AUTH DEV] #{e.class}: #{e.message}. Fallback liberado em desenvolvimento."
-        begin
-          JWT.decode(token, nil, false)
-        rescue StandardError
-          [{ 'sub' => 'dev_cuidador_local' }, {}]
-        end
-      else
-        raise e
-      end
-    end
+    # 2. Decodificação e Validação do Token
+    decoded = decode_token(token)
 
     @claims = decoded[0] || {}
     @jwt_claims = @claims
-    @current_user_id = @claims['sub'].presence || 'dev_cuidador_local'
+    @current_user_id = @claims['sub'].presence || @claims['id'].presence || 'dev_cuidador_local'
     @current_user_role = @claims.dig('app_metadata', 'role') ||
                          @claims.dig('user_metadata', 'role') ||
                          @claims['role'] ||
                          (Rails.env.development? ? 'admin' : nil)
   rescue JWT::DecodeError, JWT::ExpiredSignature => e
+    Rails.logger.warn "[AUTH ERROR] Falha na validação do token JWT: #{e.class} - #{e.message}"
     render json: { error: 'Token inválido ou expirado', details: e.message }, status: :unauthorized
   rescue StandardError => e
+    Rails.logger.error "[AUTH UNEXPECTED ERROR] #{e.class} - #{e.message}"
     render json: { error: 'Erro ao validar autenticação', details: e.message }, status: :internal_server_error
+  end
+
+  def decode_token(token)
+    header = begin
+      JSON.parse(Base64.urlsafe_decode64(token.split('.').first))
+    rescue StandardError
+      {}
+    end
+    alg = header['alg'] || 'HS256'
+
+    # 1. Se o token for assimétrico (ES256 / RS256 gerado pelo Supabase moderno)
+    if %w[ES256 RS256].include?(alg)
+      begin
+        return JWT.decode(token, nil, true, { algorithms: %w[ES256 RS256], jwks: supabase_jwks, leeway: 120 })
+      rescue StandardError => e
+        Rails.logger.warn "[JWKS VERIFY FAILED] #{e.message}. Tentando validação via API Supabase..."
+      end
+    end
+
+    # 2. Se o token for simétrico (HS256) com o JWT Secret do Supabase
+    if ENV['SUPABASE_JWT_SECRET'].present?
+      secret = ENV['SUPABASE_JWT_SECRET'].to_s.strip.delete_prefix('"').delete_suffix('"')
+      begin
+        return JWT.decode(token, secret, true, { algorithm: 'HS256', leeway: 120 })
+      rescue JWT::VerificationError => e
+        begin
+          return JWT.decode(token, Base64.decode64(secret), true, { algorithm: 'HS256', leeway: 120 })
+        rescue StandardError
+          Rails.logger.warn "[HS256 VERIFY FAILED] #{e.message}. Tentando validação via API Supabase..."
+        end
+      end
+    end
+
+    # 3. Fallback definitivo: Validação oficial direta com a API do Supabase (/auth/v1/user)
+    api_claims = validate_with_supabase_api(token)
+    return api_claims if api_claims.present?
+
+    # 4. Modo desenvolvimento
+    if Rails.env.development?
+      return [JWT.decode(token, nil, false)[0] || { 'sub' => 'dev_cuidador_local' }, {}]
+    end
+
+    raise JWT::DecodeError, "Assinatura do token (#{alg}) não pôde ser verificada."
+  end
+
+  def supabase_jwks
+    @supabase_jwks ||= begin
+      project_id = ENV.fetch('SUPABASE_PROJECT_ID', 'gqonewnyyjaxwubqxhjg')
+      uri = URI("https://#{project_id}.supabase.co/auth/v1/.well-known/jwks.json")
+      response = Net::HTTP.get(uri)
+      JWT::JWK::Set.new(JSON.parse(response))
+    end
+  end
+
+  def validate_with_supabase_api(token)
+    project_id = ENV.fetch('SUPABASE_PROJECT_ID', 'gqonewnyyjaxwubqxhjg')
+    uri = URI("https://#{project_id}.supabase.co/auth/v1/user")
+    req = Net::HTTP::Get.new(uri)
+    req['Authorization'] = "Bearer #{token}"
+    anon_key = ENV['SUPABASE_ANON_KEY'] || ENV['VITE_SUPABASE_ANON_KEY']
+    req['apikey'] = anon_key if anon_key.present?
+
+    http = Net::HTTP.new(uri.host, uri.port)
+    http.use_ssl = true
+    http.open_timeout = 4
+    http.read_timeout = 4
+    res = http.request(req)
+
+    if res.is_a?(Net::HTTPSuccess)
+      user_data = JSON.parse(res.body)
+      [{
+        'sub' => user_data['id'],
+        'email' => user_data['email'],
+        'role' => user_data['role'],
+        'app_metadata' => user_data['app_metadata'] || {},
+        'user_metadata' => user_data['user_metadata'] || {}
+      }, { 'alg' => 'SUPABASE_API' }]
+    else
+      nil
+    end
+  rescue StandardError => e
+    Rails.logger.warn "[SUPABASE AUTH API EXCEPTION] #{e.message}"
+    nil
   end
 
   alias_method :authenticate_clerk_user!, :authenticate_user!
@@ -213,7 +287,7 @@ Para cumprir os princípios de **Finalidade, Adequação e Necessidade** (Art. 6
 | `emergency_contacts`| Sub-recurso (1:N) | **Sim** | **Sim** | Comunicação imediata com familiares e responsáveis durante o socorro. |
 | `cpf` | Documento Federal | **NÃO** | **Sim** | **Protegido:** Previne fraudes financeiras, abertura indevida de contas e clonagem civil. |
 | `rg` | Documento Estadual | **NÃO** | **Sim** | **Protegido:** Identificação civil mantida em sigilo estrito fora da emergência. |
-| `sus_number` | Cartão Nacional SUS | **NÃO** | **Sim** | **Protegido:** Dado administrativo do prontuário do titular/cuidador. |
+| `sus_number` | Cartão Nacional SUS (CNS) | **Sim** | **Sim** | Identificador oficial do sistema público de saúde para triagem rápida em UPAs, prontos-socorros e regulação médica do SAMU (Tutela da Saúde - Art. 7º, VII da LGPD). Sanitizado para 15 dígitos. |
 | `private_notes` | Anotações Privadas | **NÃO** | **Sim** | **Protegido:** Informações de rotina confidencial, nunca expostas no QR Code. |
 | `user_id` | Identificador Supabase | **NÃO** | **NÃO (interno)** | UUID do cuidador no Supabase Auth (`sub`), chave de isolamento de dados. |
 | `clerk_user_id` | Identificador Legado | **NÃO** | **NÃO (interno)** | Chave de compatibilidade retroativa para contas migradas. |
@@ -416,6 +490,17 @@ Todas as tabelas do schema público possuem RLS habilitado (conforme migration `
 
 ---
 
+### 3.5 Povoamento de Dados e Seeds (`db/seeds.rb`)
+
+A API conta com um script de povoamento realista e idempotente em `db/seeds.rb` (detalhado em `docs/GUIA_POVOAMENTO_BANCO_DADOS.md`), permitindo testar fluxos clínicos completos, contatos de emergência e histórico de escaneamentos:
+- **Alvo Configurável**: Por padrão, associa os perfis ao usuário local `@current_user_id = 'dev_cuidador_local'`. Para vincular a um usuário real do Supabase em ambientes de homologação ou desenvolvimento conectado, basta definir a variável `TARGET_USER_ID`:
+  ```bash
+  TARGET_USER_ID="<uuid-do-usuario-no-supabase>" bin/rails db:seed
+  ```
+- **Dados Sintéticos Realistas**: Cadastra perfis com casos clínicos diversos (pediátricos, idosos com marcapasso, adultos com asma e alergias severas), contatos prioritários com telefones formatados e gera múltiplos registros de `scan_logs` retroativos com User-Agents móveis simulados (iOS Safari, Android Chrome, App SAMU) para alimentar os gráficos e a auditoria do Dashboard Admin.
+
+---
+
 ## 4. Contratos e Especificação de Endpoints
 
 ### 4.1 Resumo dos Endpoints
@@ -435,11 +520,12 @@ Todas as tabelas do schema público possuem RLS habilitado (conforme migration `
 ### 4.2 Detalhamento das Rotas
 
 #### 4.2.1 `GET /api/v1/emergency/:public_token`
-- **Descrição**: Rota pública acionada pelo socorrista ao ler o QR Code físico. Retorna estritamente dados médicos vitais de socorro e contatos para discagem rápida. Dispara a gravação silenciosa de auditoria em `scan_logs`.
-- **Autenticação**: Nenhuma (`skip_before_action :authenticate_user!`).
+- **Descrição**: Rota pública acionada pelo socorrista ao ler o QR Code físico. Retorna estritamente dados médicos vitais de socorro, número do Cartão SUS e contatos para discagem rápida. Dispara a gravação silenciosa e resiliente de auditoria em `scan_logs`.
+- **Autenticação**: Totalmente pública e isenta de autenticação (`skip_before_action :authenticate_user!, only: [:show], raise: false` e `skip_before_action :authenticate_clerk_user!, only: [:show], raise: false`).
 - **Parâmetros de Rota**:
   - `public_token` (UUID v4 obrigatório): Token contido na URL do QR Code.
-- **Efeito Colateral**: Insere um registro em `scan_logs` com `ip_address: request.remote_ip`, `user_agent: request.user_agent`, `scanned_at: Time.current`.
+- **Efeito Colateral**: Insere um registro em `scan_logs` com `ip_address: request.remote_ip`, `user_agent: request.user_agent`, `scanned_at: Time.current` envolto em bloco não-bloqueante (`rescue StandardError`), garantindo que eventuais instabilidades na auditoria nunca impeçam o acesso emergencial do socorrista.
+- **Tratamento de Exceções**: Captura `ActiveRecord::RecordNotFound` e `ActiveRecord::StatementInvalid`, retornando `404 Not Found`.
 - **Respostas**:
 
 ##### 200 OK
@@ -453,6 +539,7 @@ Todas as tabelas do schema público possuem RLS habilitado (conforme migration `
   "gender": "Feminino",
   "blood_type": "O+",
   "organ_donor": true,
+  "sus_number": "898001234567890",
   "medical_notes": "Alergia severa a dipirona e anti-inflamatórios não-esteroidais.",
   "medical_devices": [
     "Marcapasso Cardíaco (Não desfibrilar convencionalmente)"
@@ -648,16 +735,26 @@ Todas as tabelas do schema público possuem RLS habilitado (conforme migration `
 ---
 
 #### 4.2.7 `GET /api/v1/admin/dashboard`
-- **Descrição**: Endpoint exclusivo para administradores da plataforma. Retorna KPIs agregados de monitoramento do sistema e a listagem dos últimos 50 escaneamentos de emergência auditados.
-- **Autenticação**: Obrigatória via Bearer JWT (Supabase Auth HS256).
-- **Autorização**: Validação da claim `role == 'admin'`, `app_metadata.role == 'admin'`, `user_metadata.role == 'admin'` ou presença do identificador `user_id` na lista `ADMIN_USER_IDS`. Retorna `403 Forbidden` se o usuário logado não possuir privilégios administrativos.
+- **Descrição**: Endpoint exclusivo para administradores da plataforma. Retorna KPIs agregados de monitoramento do sistema (incluindo acessos nas últimas 24 horas - `scans_today`) e a listagem dos últimos 50 escaneamentos de emergência auditados com proteção de privacidade.
+- **Autenticação**: Obrigatória via Bearer JWT do Supabase Auth (suportando tanto tokens ES256 via JWKS quanto HS256 via secret).
+- **Autorização**: Validação executada por `Api::V1::Admin::BaseController#require_admin!`:
+  - Verifica claims administrativas no token: `app_metadata.role == 'admin'`, `user_metadata.role == 'admin'`, `role == 'admin'`, `metadata.role == 'admin'` ou `public_metadata.role == 'admin'`.
+  - OU verifica se o `@current_user_id` está presente nas variáveis de ambiente `ADMIN_USER_IDS`, `ADMIN_SUPABASE_IDS` ou `ADMIN_CLERK_IDS`.
+  - Retorna `403 Forbidden` com `{ "error": "Acesso não autorizado ao painel administrativo." }` se o usuário não possuir privilégios administrativos.
+- **Privacidade e Proteção LGPD (`mask_ip`)**:
+  - Para conformidade estrita com a LGPD, os endereços IP dos socorristas na listagem `recent_scans` são obrigatoriamente mascarados pelo backend (ex.: `191.209.***.***` ou `2001:0db8:****:****`), mitigando riscos de identificação geográfica desnecessária.
 - **Exemplo de Resposta `200 OK`**:
 ```json
 {
+  "total_patients": 128,
+  "total_scans": 1450,
+  "total_caregivers": 94,
+  "scans_today": 12,
   "kpis": {
     "total_patients": 128,
     "total_scans": 1450,
-    "total_caregivers": 94
+    "total_caregivers": 94,
+    "scans_today": 12
   },
   "recent_scans": [
     {
@@ -665,7 +762,7 @@ Todas as tabelas do schema público possuem RLS habilitado (conforme migration `
       "patient_id": 1,
       "patient_name": "Maria Francisca dos Santos",
       "public_token": "cb11872a-8338-4119-8ca6-f14f7b77aace",
-      "ip_address": "191.209.45.12",
+      "ip_address": "191.209.***.***",
       "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X)",
       "scanned_at": "2026-09-21T08:15:30.000Z"
     }
@@ -676,7 +773,7 @@ Todas as tabelas do schema público possuem RLS habilitado (conforme migration `
 - **Exemplo de Resposta `403 Forbidden`**:
 ```json
 {
-  "error": "Acesso negado: recurso exclusivo para administradores"
+  "error": "Acesso não autorizado ao painel administrativo."
 }
 ```
 
@@ -684,16 +781,23 @@ Todas as tabelas do schema público possuem RLS habilitado (conforme migration `
 
 ## 5. Auditoria e Logs de Emergência (`ScanLog`)
 
-### 5.1 Fluxo de Gravação Silenciosa
-A cada requisição no endpoint público `GET /api/v1/emergency/:public_token`, a aplicação grava um registro de auditoria antes da resposta:
+### 5.1 Fluxo de Gravação Silenciosa e Resiliente
+A cada requisição no endpoint público `GET /api/v1/emergency/:public_token`, a aplicação executa o registro de telemetria de forma isolada e não-bloqueante:
 
 ```ruby
 # app/controllers/api/v1/emergency_profiles_controller.rb
 patient = Patient.includes(:emergency_contacts).find_by!(public_token: params[:public_token])
 
-patient.scan_logs.create(
-  ip_address: request.remote_ip,
-  user_agent: request.user_agent,
+begin
+  patient.scan_logs.create(
+    ip_address: request.remote_ip,
+    user_agent: request.user_agent,
+    scanned_at: Time.current
+  )
+rescue StandardError => e
+  Rails.logger.warn("[SOSqr] Falha não impeditiva ao registrar log de escaneamento: #{e.message}")
+end
+```
   scanned_at: Time.current
 )
 ```
@@ -740,22 +844,49 @@ end
 
 ## 7. Variáveis de Ambiente e Configuração
 
-O backend requer as seguintes variáveis configuradas no arquivo `.env` (ou no ambiente de container/produção):
+O backend requer as seguintes variáveis configuradas no arquivo `.env` (ou no painel do Render/contêiner de produção):
 
 ```bash
 # Conexão PostgreSQL direta ao Supabase via Session Pooler (porta 5432)
 DATABASE_URL="postgresql://postgres.<project_ref>:<password>@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
 
-# Chave secreta de validação JWT do Supabase Auth (Dashboard Supabase -> Project Settings -> API -> JWT Settings)
+# Modo SSL do PostgreSQL (padrão em produção: require)
+DB_SSLMODE=require
+
+# Identificador do Projeto Supabase (utilizado na busca dinâmica de JWKS e fallback API)
+SUPABASE_PROJECT_ID="gqonewnyyjaxwubqxhjg"
+
+# Chave secreta de validação JWT do Supabase Auth (HS256 - string ou base64)
 SUPABASE_JWT_SECRET="sua_supabase_jwt_secret_aqui..."
 
-# Lista opcional de UUIDs de administradores separados por vírgula
-ADMIN_USER_IDS="00000000-0000-0000-0000-000000000000"
+# Chave pública/anon do Supabase (utilizada no fallback da Auth API /auth/v1/user)
+SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 
-# Ambiente Rails
-RAILS_ENV=development
+# Lista de identificadores (UUIDs) autorizados para o painel administrativo
+ADMIN_USER_IDS="00000000-0000-0000-0000-000000000000"
+ADMIN_SUPABASE_IDS="00000000-0000-0000-0000-000000000000"
+
+# Chave secreta de integridade de sessão do Rails (produção)
+SECRET_KEY_BASE="gerar_via_bin_rails_secret_ou_automatico_no_render"
+
+# Configuração de processos e threads do Puma
 PORT=3000
+RAILS_MAX_THREADS=5
+WEB_CONCURRENCY=0 # Modo single process (0 workers) para não exceder 512MB RAM no Render
+
+# Origens autorizadas no CORS (separadas por vírgula)
+ALLOWED_ORIGINS="https://sosqr.vercel.app,http://localhost:5173"
+
+# Ambiente Rails e nível de log
+RAILS_ENV=production
+RAILS_LOG_LEVEL=info
 ```
+
+### 7.1 Deploy e Infraestrutura em Nuvem (Render Blueprint)
+A aplicação está preparada para implantação com Dockerfile otimizado multi-stage em harmonia com o arquivo `render.yaml`:
+- **Migrações Automáticas**: No script `entrypoint.sh`, a inicialização do contêiner executa `bundle exec rails db:migrate` com timeout estrito de 15 segundos para evitar travamentos decorrentes de poolers em espera.
+- **Isolamento de Memória**: O Puma opera em modo single worker (`WEB_CONCURRENCY=0`), estabilizando o consumo em ~160MB de RAM e mantendo margem segura na camada gratuita do Render.
+- **Healthcheck Nativo do Rails 8**: Monitoramento de integridade ativo na rota `/up`.
 
 ---
 

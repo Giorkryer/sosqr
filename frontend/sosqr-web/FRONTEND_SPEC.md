@@ -19,8 +19,8 @@ O **SOSqr Frontend** é uma plataforma para gestão e visualização imediata de
 | **Vite** | `8.3.x` | Build tool e dev server ultra-rápido baseado em ES modules nativos. |
 | **TypeScript** | `5.8.x` / `6.x` | Tipagem estática rigorosa (`strict: true`), prevenindo bugs em tempo de compilação. |
 | **Tailwind CSS** | `3.4.x` | Estilização utilitária com Design System customizado e zero overhead de runtime CSS. |
-| **@supabase/supabase-js** | `^2.118.x` | Autenticação gerenciada (Supabase Auth com JWT HS256), client nativo para Postgres, RLS e Realtime. |
-| **Axios** | `1.20.x` | Cliente HTTP com interceptor para injeção automática do Bearer Token da sessão Supabase. |
+| **@supabase/supabase-js** | `^2.118.x` | Autenticação gerenciada (Supabase Auth com tokens ES256/HS256), client nativo para Postgres, RLS e renovação transparente de sessão. |
+| **Axios** | `1.20.x` | Cliente HTTP com interceptor para renovação proativa de sessão expirando (<60s) e injeção automática do Bearer Token. |
 | **qrcode.react** | `4.2.x` | Geração de QR Code vetorial (`QRCodeSVG`) e canvas oculto para extração de PNG a 300 DPI. |
 | **@react-pdf/renderer**| `4.9.x` | Renderização e exportação de PDF vetorial do cartão físico CR80 (client-side) a 300 DPI. |
 | **lucide-react** | `1.47.x` | Iconografia consistente, leve e semanticamente acessível. |
@@ -187,7 +187,10 @@ frontend/sosqr-web/src/
 - **Comportamento e Resiliência**:
   - **Redirecionamento Pós-Autenticação**: Direcionamento automático para `/dashboard`.
   - **Feedback no Botão Social**: Estado `oauthLoading` com spinner (`Loader2`) e rótulo animado "Conectando com o Google..." para prevenir duplo clique.
-  - **Tratamento de Erros via URL e Callbacks**: O componente escuta parâmetros de URL (`?error_description=...` ou hash fragments `#error=...`). Erros conhecidos como `validation_failed` ou `provider is not enabled` são capturados e convertidos em alertas educativos em português, orientando a ativação do provedor no Supabase Dashboard.
+  - **Tratamento Especializado de Erros e Captcha**:
+    - O componente escuta parâmetros de URL (`?error_description=...` ou hash fragments `#error=...`). Erros conhecidos como `validation_failed` ou `provider is not enabled` são convertidos em alertas educativos em português.
+    - **Proteção contra Captcha Não-Configurado**: Caso a proteção contra ataques do Supabase exija Captcha sem o widget correspondente no cliente (`captcha`), exibe instrução precisa orientando a desativar o Captcha no painel do Supabase (*Authentication > Attack Protection*) para liberar os acessos.
+    - Mensagens amigáveis para credenciais incorretas e confirmação de e-mail pendente.
   - **Alternância Fluida**: Transição instantânea entre login e cadastro sem reload de página.
 
 ---
@@ -196,19 +199,19 @@ frontend/sosqr-web/src/
 - **Objetivo**: Atendimento pré-hospitalar e socorro imediato por profissionais do SAMU, bombeiros ou transeuntes.
 - **Design & Layout**:
   - **100% Mobile-First e Autônoma**: Sem barra de navegação do sistema, menus ou botões de login para focar exclusivamente no resgate.
-  - **Consumo de API**: `GET /api/v1/emergency/:public_token` (chamada assíncrona pública sem Bearer Token).
+  - **Consumo de API**: `GET /api/v1/emergency/:public_token` (chamada assíncrona pública sem Bearer Token, com logs de erro silenciosos e não-impeditivos no console).
   - **Ambiente de Demonstração**: Acesso à URL `/emergency/demo` carrega automaticamente dados completos de teste (`DEMO_PROFILE`) sem depender do backend.
 - **Blocos Visuais**:
   1. **Cabeçalho de Emergência**:
      - Banner superior: `SOSqr | FICHA PÚBLICA DE EMERGÊNCIA`.
      - Nome civil completo e nome social/exibição em destaque tipográfico Atkinson.
-     - Idade em anos e data de nascimento formatada (`DD/MM/AAAA`).
+     - Idade em anos, data de nascimento formatada (`DD/MM/AAAA`), Gênero e **Número do Cartão do SUS (`sus_number`)** para triagem imediata no sistema público de saúde.
   2. **Bloco de Alerta Crítico (Destaque Imediato)**:
      - Caixa de alerta com fundo `rose-50` e borda `rose-200`.
      - **Tipo Sanguíneo Gigante**: Exibição em caixa alta com fator Rh textual (ex.: `O+ (Positivo)`).
      - **Selo de Doador de Órgãos**: Badge indicativo da vontade expressa.
      - **Alergias Medicamentosas / Alimentares**: Tags vermelhas destacadas (ex.: "Penicilina e Dipirona").
-     - **Medicamentos de Alto Risco**: Destaque para anticoagulantes, insulina ou psicotrópicos (ex.: "Rivaroxabana (Xarelto) e Insulina").
+     - **Medicamentos em Uso**: Destaque com etiqueta clara `MEDICAMENTOS EM USO:` para prevenção de interações e riscos cirúrgicos.
   3. **Bloco Clínico Completo**:
      - **Condições Crônicas**: Chips destacados para hipertensão, diabetes, asma, etc.
      - **Dispositivos Médicos e Implantes**: Alertas para marcapasso cardíaco (com aviso: "Não desfibrilar convencionalmente"), próteses ou aparelhos auditivos.
@@ -294,21 +297,25 @@ frontend/sosqr-web/src/
 
 #### 6. `/admin` (Painel Administrativo Restrito)
 - **Controle de Acesso**: Validação de claim/role `admin` no usuário do Supabase Auth (`user?.app_metadata?.role === 'admin' || user?.user_metadata?.role === 'admin'`). Cuidadores sem privilégio administrativo são interceptados pelo `<AdminGuard />` e redirecionados para o `/dashboard` com aviso visual de acesso negado.
-- **KPIs em Destaque**:
-  - **"Total de Perfis Cadastrados"**
-  - **"Total de Leituras QR Code"**
-  - **"Total de Cuidadores Registrados"**
+- **4 Cards de KPIs em Destaque**:
+  1. **"Perfis Cadastrados"** (`total_patients`): Total de prontuários médicos ativos no ecossistema.
+  2. **"Total de Scans"** (`total_scans`): Histórico acumulado de leituras de QR Code.
+  3. **"Total de Cuidadores"** (`total_caregivers`): Contas de cuidadores e familiares com perfis vinculados.
+  4. **"Scans Hoje"** (`scans_today`): Acessos e atendimentos registrados nas últimas 24 horas correntes.
 - **Tabela de Auditoria de Acessos Recentes**:
   - Listagem dos últimos 50 escaneamentos registrados no ecossistema (`GET /api/v1/admin/dashboard`).
-  - Colunas: **"Pessoa / Titular"**, Token UUID, Endereço IP do Socorrista, Dispositivo / User-Agent e Data e Hora.
+  - Colunas: **"Pessoa / Titular"**, Token UUID, Endereço IP do Socorrista (mascarado pelo backend no formato `191.209.***.***` para privacidade LGPD), Dispositivo / User-Agent e Data e Hora.
   - Filtro e busca em tempo real por nome, token ou IP.
 
 ---
 
 ## 5. Gerenciamento de Estado e Ciclo de Comunicação com a API
 
-### 5.1 Sincronização Supabase Auth e Axios (`src/services/api.ts`)
-A integração stateless do frontend com a API Rails 8 utiliza um interceptor nativo no Axios que obtém o access token (JWT HS256) diretamente da sessão ativa gerenciada pelo cliente oficial do Supabase Auth:
+### 5.1 Sincronização Supabase Auth e Axios com Renovação Proativa (`src/services/api.ts`)
+A integração do frontend com a API Rails 8 utiliza um interceptor nativo no Axios com renovação preventiva e inteligente de tokens:
+1. Verifica se a sessão em cache está a menos de 60 segundos de expirar (`expires_at * 1000 < Date.now() + 60000`).
+2. Caso esteja prestes a expirar, dispara previamente `supabase.auth.refreshSession()`, renovando o token de forma transparente antes do disparo da requisição.
+3. Anexa o token de acesso (suportando tokens modernos ES256 ou HS256) no cabeçalho `Authorization: Bearer <access_token>`.
 
 ```mermaid
 sequenceDiagram
@@ -319,8 +326,12 @@ sequenceDiagram
     participant Rails as Rails 8 API (sosqr-api)
 
     React->>Axios: api.get('/patients')
-    Axios->>Supabase: getSession() (Busca sessão ativa em cache local)
-    Supabase-->>Axios: Retorna session.access_token (JWT HS256)
+    Axios->>Supabase: getSession() (Busca sessão ativa em cache)
+    alt Sessão prestes a expirar (< 60s)
+        Axios->>Supabase: refreshSession() (Renova token preventivamente)
+        Supabase-->>Axios: Nova sessão com access_token atualizado
+    end
+    Supabase-->>Axios: Retorna session.access_token (JWT ES256 / HS256)
     Axios->>Rails: Header Authorization: Bearer <session.access_token>
     Rails-->>Axios: 200 OK (Dados dos pacientes com user_id do token)
     Axios-->>React: Retorna res.data
@@ -370,24 +381,49 @@ A aplicação conta com suíte automatizada de testes (11 arquivos de especifica
 
 ---
 
-## 8. Variáveis de Ambiente e Configuração
+## 8. Variáveis de Ambiente e Configuração de Deploy
 
-O frontend consome as seguintes variáveis no arquivo `.env`:
+O frontend consome as seguintes variáveis no arquivo `.env` (ou no painel da Vercel):
 
 ```bash
-# URL base da API RESTful Rails
-VITE_API_URL=http://localhost:3000/api/v1
-VITE_PUBLIC_APP_URL=http://localhost:5173
+# ==========================================
+# Variáveis de Ambiente do SOSqr Frontend
+# ==========================================
 
-# Supabase Auth e Cliente Oficial (@supabase/supabase-js)
+# 1. Supabase Project URL & Anon Key (Supabase > Project Settings > API)
 VITE_SUPABASE_URL=https://<seu-projeto>.supabase.co
 VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+# 2. URL da API Rails 8 Backend
+# Desenvolvimento Local: http://localhost:3000/api/v1
+# Produção no Render: https://sosqr-api.onrender.com/api/v1
+VITE_API_URL=http://localhost:3000/api/v1
+
+# 3. URL Pública da Aplicação Web
+# Desenvolvimento Local: http://localhost:5173
+# Produção na Vercel: https://sosqr.vercel.app (ou seu domínio customizado)
+VITE_PUBLIC_APP_URL=http://localhost:5173
 ```
 
 > **Configuração de OAuth (Google) no Supabase Dashboard:**
 > - **Redirect URI autorizado no Google Cloud Console**: `https://<seu-projeto>.supabase.co/auth/v1/callback`
-> - **Site URL no Supabase (Auth > URL Configuration)**: `http://localhost:5173`
-> - **Redirect URLs permitidos no Supabase**: `http://localhost:5173/**` e `http://localhost:5173/dashboard`
+> - **Site URL no Supabase (Auth > URL Configuration)**: `http://localhost:5173` (ou `https://sosqr.vercel.app`)
+> - **Redirect URLs permitidos no Supabase**: `http://localhost:5173/**`, `http://localhost:5173/dashboard`, `https://sosqr.vercel.app/**` e `https://sosqr.vercel.app/dashboard`
+> - **Proteção contra Ataques / Captcha**: Se não estiver utilizando widget de captcha no frontend, mantenha desativada a opção de Captcha em *Authentication > Attack Protection*.
+
+### 8.1 Configuração de Deploy na Vercel (`vercel.json`)
+Como o SOSqr é uma Single Page Application (SPA) com roteamento via `react-router-dom`, todas as requisições diretas de rotas profundas (como `/login`, `/dashboard`, `/emergency/:token`) devem ser reescritas para o `index.html`:
+
+```json
+{
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
+```
 
 ---
 

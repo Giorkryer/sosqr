@@ -64,6 +64,10 @@ export const AuthPage: FC<AuthPageProps> = ({ initialMode = 'sign-in' }) => {
             setErrorMessage('E-mail ou senha incorretos.');
           } else if (error.message.includes('Email not confirmed')) {
             setErrorMessage('Por favor, confirme seu e-mail antes de fazer login.');
+          } else if (error.message.toLowerCase().includes('captcha')) {
+            setErrorMessage(
+              'A proteção de Captcha está ativada no Supabase sem integração no frontend. Desative o Captcha no painel do Supabase (Authentication > Attack Protection) para liberar o acesso por e-mail/senha.'
+            );
           } else {
             setErrorMessage(error.message || 'Falha ao autenticar.');
           }
@@ -73,7 +77,13 @@ export const AuthPage: FC<AuthPageProps> = ({ initialMode = 'sign-in' }) => {
       } else {
         const { error } = await signUp(email, password, fullName);
         if (error) {
-          setErrorMessage(error.message || 'Falha ao criar cadastro.');
+          if (error.message.toLowerCase().includes('captcha')) {
+            setErrorMessage(
+              'A proteção de Captcha está ativada no Supabase sem integração no frontend. Desative o Captcha no painel do Supabase (Authentication > Attack Protection) para permitir novos cadastros.'
+            );
+          } else {
+            setErrorMessage(error.message || 'Falha ao criar cadastro.');
+          }
         } else {
           setSuccessMessage(
             'Cadastro realizado! Se a confirmação de e-mail estiver ativada, verifique sua caixa de entrada.'
