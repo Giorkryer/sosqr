@@ -64,7 +64,7 @@ module Api
           :display_name, :full_name, :cpf, :rg, :sus_number, :birth_date,
           :blood_type, :organ_donor, :private_notes, :medical_notes,
           :gender, :health_insurance_name, :health_insurance_number,
-          allergies: [], chronic_conditions: [], medications_in_use: [], medical_devices: [],
+          allergies: [], chronic_conditions: [], medications_in_use: [], medical_devices: [], previous_surgeries: [],
           emergency_contacts_attributes: [:id, :name, :phone_number, :relationship, :is_primary, :_destroy]
         )
       end

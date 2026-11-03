@@ -34,6 +34,7 @@ module Api
           allergies: patient.allergies || [],
           chronic_conditions: patient.chronic_conditions || [],
           medications_in_use: patient.medications_in_use || [],
+          previous_surgeries: patient.previous_surgeries || [],
           emergency_contacts: patient.emergency_contacts.map { |c|
             {
               name: c.name,
