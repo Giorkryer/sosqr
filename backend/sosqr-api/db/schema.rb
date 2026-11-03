@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_23_131500) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_02_130000) do
   create_schema "extensions"
 
   # These are extensions that must be enabled in order to support this database
@@ -48,6 +48,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_23_131500) do
     t.text "medical_notes"
     t.jsonb "medications_in_use"
     t.boolean "organ_donor"
+    t.jsonb "previous_surgeries", default: [], null: false
     t.text "private_notes"
     t.uuid "public_token"
     t.string "rg"
