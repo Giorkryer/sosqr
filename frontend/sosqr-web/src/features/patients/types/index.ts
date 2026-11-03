@@ -41,6 +41,7 @@ export interface Patient {
   allergies: string[];
   chronic_conditions?: string[];
   medications_in_use?: string[];
+  previous_surgeries?: string[];
   medical_notes?: string;
   organ_donor?: boolean;
   private_notes?: string;

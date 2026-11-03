@@ -37,6 +37,7 @@ interface PatientFormData {
   allergies: string[];
   chronic_conditions: string[];
   medications_in_use: string[];
+  previous_surgeries: string[];
   medical_devices: string[];
   emergency_contacts_attributes: EmergencyContactForm[];
 }
@@ -60,6 +61,7 @@ const INITIAL_FORM: PatientFormData = {
   allergies: [],
   chronic_conditions: [],
   medications_in_use: [],
+  previous_surgeries: [],
   medical_devices: [],
   emergency_contacts_attributes: [
     {
@@ -128,6 +130,7 @@ export const PatientFormPage: FC = () => {
   const [allergyInput, setAllergyInput] = useState('');
   const [conditionInput, setConditionInput] = useState('');
   const [medicationInput, setMedicationInput] = useState('');
+  const [surgeryInput, setSurgeryInput] = useState('');
 
   useEffect(() => {
     if (id) {
@@ -151,6 +154,7 @@ export const PatientFormPage: FC = () => {
             allergies: Array.isArray(data.allergies) ? data.allergies : [],
             chronic_conditions: Array.isArray(data.chronic_conditions) ? data.chronic_conditions : [],
             medications_in_use: Array.isArray(data.medications_in_use) ? data.medications_in_use : [],
+            previous_surgeries: Array.isArray(data.previous_surgeries) ? data.previous_surgeries : [],
             medical_devices: Array.isArray(data.medical_devices) ? data.medical_devices : [],
             emergency_contacts_attributes: Array.isArray(data.emergency_contacts)
               ? data.emergency_contacts.map((c: EmergencyContactForm) => ({
@@ -171,7 +175,7 @@ export const PatientFormPage: FC = () => {
   }, [id]);
 
   const handleAddTag = (
-    field: 'allergies' | 'chronic_conditions' | 'medications_in_use',
+    field: 'allergies' | 'chronic_conditions' | 'medications_in_use' | 'previous_surgeries',
     value: string,
     clearInput: () => void
   ) => {
@@ -187,7 +191,7 @@ export const PatientFormPage: FC = () => {
   };
 
   const handleRemoveTag = (
-    field: 'allergies' | 'chronic_conditions' | 'medications_in_use',
+    field: 'allergies' | 'chronic_conditions' | 'medications_in_use' | 'previous_surgeries',
     indexToRemove: number
   ) => {
     setFormData((prev) => ({
@@ -198,7 +202,7 @@ export const PatientFormPage: FC = () => {
 
   const handleKeyDownTag = (
     e: KeyboardEvent<HTMLInputElement>,
-    field: 'allergies' | 'chronic_conditions' | 'medications_in_use',
+    field: 'allergies' | 'chronic_conditions' | 'medications_in_use' | 'previous_surgeries',
     value: string,
     clearInput: () => void
   ) => {
@@ -627,6 +631,56 @@ export const PatientFormPage: FC = () => {
                   className="text-xs font-bold text-[#0B6651] hover:text-[#084d3d] px-2 py-1.5"
                 >
                   + Adicionar Medicamento
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-stone-700 block">
+                Cirurgias Anteriores
+              </label>
+              <div className="flex flex-wrap gap-1.5 min-h-[32px] p-2 bg-stone-50/80 border border-stone-200 rounded-xl">
+                {formData.previous_surgeries.map((surgery, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-white border border-stone-300 text-stone-800 shadow-xs"
+                  >
+                    {surgery}
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveTag('previous_surgeries', idx)}
+                      className="text-stone-400 hover:text-rose-500 transition-colors"
+                      title="Remover cirurgia"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </span>
+                ))}
+                {formData.previous_surgeries.length === 0 && (
+                  <span className="text-xs text-stone-400 italic">Nenhuma cirurgia adicionada</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 mt-1">
+                <input
+                  type="text"
+                  value={surgeryInput}
+                  onChange={(e) => setSurgeryInput(e.target.value)}
+                  onKeyDown={(e) =>
+                    handleKeyDownTag(e, 'previous_surgeries', surgeryInput, () =>
+                      setSurgeryInput('')
+                    )
+                  }
+                  placeholder="Ex: Apendicectomia (2015), Colecistectomia"
+                  className="flex-1 px-3 py-1.5 text-xs bg-white border border-stone-300 rounded-lg focus:outline-none focus:border-teal-700"
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleAddTag('previous_surgeries', surgeryInput, () => setSurgeryInput(''))
+                  }
+                  className="text-xs font-bold text-[#0B6651] hover:text-[#084d3d] px-2 py-1.5"
+                >
+                  + Adicionar Cirurgia
                 </button>
               </div>
             </div>
