@@ -27,6 +27,7 @@ export interface EmergencyProfile {
   allergies: string[];
   chronic_conditions: string[];
   medications_in_use: string[];
+  previous_surgeries?: string[];
   emergency_contacts: EmergencyContact[];
 }
 
@@ -41,6 +42,7 @@ const DEMO_PROFILE: EmergencyProfile = {
   organ_donor: true,
   allergies: ['Penicilina e Dipirona'],
   medications_in_use: ['Rivaroxabana (Xarelto) e Insulina'],
+  previous_surgeries: ['Implante de marcapasso (2019)', 'Artroplastia de fêmur (2021)'],
   chronic_conditions: [
     'Hipertensão Arterial',
     'Diabetes Tipo 2 (Risco de choque)',
@@ -352,6 +354,24 @@ export const EmergencyProfilePage: FC = () => {
                     className="bg-stone-100 border border-stone-200/90 text-stone-800 text-xs font-semibold px-3.5 py-1.5 rounded-xl inline-flex items-center"
                   >
                     {device}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {profile.previous_surgeries && profile.previous_surgeries.length > 0 && (
+            <div>
+              <span className="text-xs font-black uppercase tracking-wider text-stone-900 block mb-2.5">
+                CIRURGIAS ANTERIORES
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {profile.previous_surgeries.map((surgery, idx) => (
+                  <span
+                    key={idx}
+                    className="bg-stone-100 border border-stone-200/90 text-stone-800 text-xs font-semibold px-3.5 py-1.5 rounded-xl inline-flex items-center"
+                  >
+                    {surgery}
                   </span>
                 ))}
               </div>
