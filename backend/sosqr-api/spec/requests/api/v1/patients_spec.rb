@@ -1,14 +1,14 @@
 require 'rails_helper'
 
 RSpec.describe "Api::V1::Patients", type: :request do
-  let(:rsa_key) { OpenSSL::PKey::RSA.generate(2048) }
+  let(:jwt_secret) { "test_supabase_jwt_secret" }
   let(:clerk_user_id) { "user_clerk_test_123" }
-  let(:valid_token) { JWT.encode({ sub: clerk_user_id, exp: 1.day.from_now.to_i }, rsa_key, 'RS256') }
+  let(:valid_token) { JWT.encode({ sub: clerk_user_id, exp: 1.day.from_now.to_i }, jwt_secret, 'HS256') }
   let(:auth_headers) { { 'Authorization' => "Bearer #{valid_token}" } }
 
   before do
     allow(ENV).to receive(:[]).and_call_original
-    allow(ENV).to receive(:[]).with('CLERK_PEM_PUBLIC_KEY').and_return(rsa_key.public_key.to_pem)
+    allow(ENV).to receive(:[]).with('SUPABASE_JWT_SECRET').and_return(jwt_secret)
   end
 
   describe "GET /api/v1/patients sem autenticação" do
@@ -89,6 +89,22 @@ RSpec.describe "Api::V1::Patients", type: :request do
       expect(json["medical_devices"]).to eq(["Auditivo bilateral"])
     end
 
+    it "persiste previous_surgeries ao criar o paciente" do
+      params = { patient: { display_name: "Seu José", blood_type: "A+", previous_surgeries: ["Apendicectomia", "Colecistectomia (2020)"] } }
+
+      post "/api/v1/patients", params: params, headers: auth_headers, as: :json
+
+      expect(response).to have_http_status(:created)
+      expect(JSON.parse(response.body)["previous_surgeries"]).to eq(["Apendicectomia", "Colecistectomia (2020)"])
+    end
+
+    it "assume previous_surgeries como lista vazia quando não informado" do
+      post "/api/v1/patients", params: { patient: { display_name: "Seu José", blood_type: "A+" } }, headers: auth_headers, as: :json
+
+      expect(response).to have_http_status(:created)
+      expect(JSON.parse(response.body)["previous_surgeries"]).to eq([])
+    end
+
     it "assume o primeiro nome quando display_name não é fornecido (before_validation)" do
       params_without_display = {
         patient: {
@@ -102,6 +118,18 @@ RSpec.describe "Api::V1::Patients", type: :request do
       expect(response).to have_http_status(:created)
       json = JSON.parse(response.body)
       expect(json["display_name"]).to eq("Sebastião")
+    end
+  end
+
+  describe "PATCH /api/v1/patients/:id" do
+    let!(:patient_owned) { create(:patient, clerk_user_id: clerk_user_id, previous_surgeries: []) }
+
+    it "atualiza previous_surgeries" do
+      patch "/api/v1/patients/#{patient_owned.id}", params: { patient: { previous_surgeries: ["Hérnia inguinal"] } }, headers: auth_headers, as: :json
+
+      expect(response).to have_http_status(:ok)
+      expect(JSON.parse(response.body)["previous_surgeries"]).to eq(["Hérnia inguinal"])
+      expect(patient_owned.reload.previous_surgeries).to eq(["Hérnia inguinal"])
     end
   end
 

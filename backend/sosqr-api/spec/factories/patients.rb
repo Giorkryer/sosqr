@@ -16,6 +16,7 @@ FactoryBot.define do
     allergies { ["Dipirona", "Penicilina"] }
     chronic_conditions { ["Hipertensão", "Diabetes Tipo 2"] }
     medications_in_use { ["Losartana 50mg", "Metformina 850mg"] }
+    previous_surgeries { ["Apendicectomia (2015)"] }
     medical_notes { "Apresenta marcha instável e restrição hídrica" }
     private_notes { "Histórico familiar sigiloso" }
   end

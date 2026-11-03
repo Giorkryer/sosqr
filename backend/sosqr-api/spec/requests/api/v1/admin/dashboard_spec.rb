@@ -1,12 +1,12 @@
 require 'rails_helper'
 
 RSpec.describe "Api::V1::Admin::Dashboard", type: :request do
-  let(:rsa_key) { OpenSSL::PKey::RSA.generate(2048) }
+  let(:jwt_secret) { "test_supabase_jwt_secret" }
   let(:regular_user_id) { "user_clerk_regular_123" }
   let(:admin_user_id) { "user_clerk_admin_999" }
 
   let(:regular_token) do
-    JWT.encode({ sub: regular_user_id, exp: 1.day.from_now.to_i }, rsa_key, 'RS256')
+    JWT.encode({ sub: regular_user_id, exp: 1.day.from_now.to_i }, jwt_secret, 'HS256')
   end
 
   let(:admin_metadata_token) do
@@ -16,8 +16,8 @@ RSpec.describe "Api::V1::Admin::Dashboard", type: :request do
         metadata: { role: 'admin' },
         exp: 1.day.from_now.to_i
       },
-      rsa_key,
-      'RS256'
+      jwt_secret,
+      'HS256'
     )
   end
 
@@ -28,8 +28,8 @@ RSpec.describe "Api::V1::Admin::Dashboard", type: :request do
         public_metadata: { role: 'admin' },
         exp: 1.day.from_now.to_i
       },
-      rsa_key,
-      'RS256'
+      jwt_secret,
+      'HS256'
     )
   end
 
@@ -39,7 +39,7 @@ RSpec.describe "Api::V1::Admin::Dashboard", type: :request do
 
   before do
     allow(ENV).to receive(:[]).and_call_original
-    allow(ENV).to receive(:[]).with('CLERK_PEM_PUBLIC_KEY').and_return(rsa_key.public_key.to_pem)
+    allow(ENV).to receive(:[]).with('SUPABASE_JWT_SECRET').and_return(jwt_secret)
     allow(ENV).to receive(:[]).with('ADMIN_CLERK_IDS').and_return(nil)
   end
 
@@ -58,7 +58,7 @@ RSpec.describe "Api::V1::Admin::Dashboard", type: :request do
 
         expect(response).to have_http_status(:unauthorized)
         json = JSON.parse(response.body)
-        expect(json["error"]).to eq("Token não fornecido")
+        expect(json["error"]).to eq("Token de autenticação não fornecido")
       end
     end
 
@@ -138,9 +138,9 @@ RSpec.describe "Api::V1::Admin::Dashboard", type: :request do
         expect(json["total_patients"]).to eq(3)
       end
 
-      it "retorna 'Perfil Desativado' quando o paciente associado foi removido ou não possui full_name" do
-        orphan_scan = build(:scan_log, patient: nil, ip_address: "10.0.0.1", scanned_at: Time.current)
-        orphan_scan.save(validate: false)
+      it "retorna 'Perfil Desativado' quando o paciente associado não possui full_name" do
+        patient_3.update_column(:full_name, nil)
+        orphan_scan = create(:scan_log, patient: patient_3, ip_address: "10.0.0.1", scanned_at: Time.current)
 
         get "/api/v1/admin/dashboard", headers: admin_metadata_headers
 
